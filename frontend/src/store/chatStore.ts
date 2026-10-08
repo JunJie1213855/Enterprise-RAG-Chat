@@ -15,6 +15,8 @@ interface ChatState {
   addSession: (session: ChatSession) => void
   removeSession: (id: string) => void
   setCurrentSession: (id: string | null) => void
+  /** Point at a session without discarding the messages already on screen. */
+  setSessionId: (id: string | null) => void
   setMessages: (messages: Message[]) => void
   addMessage: (message: Message) => void
   setLoading: (v: boolean) => void
@@ -43,6 +45,7 @@ export const useChatStore = create<ChatState>((set) => ({
     set((s) => ({ sessions: s.sessions.filter((s) => s.id !== id) })),
   setCurrentSession: (id) =>
     set({ currentSessionId: id, messages: [], ragContexts: [] }),
+  setSessionId: (id) => set({ currentSessionId: id }),
   setMessages: (messages) => set({ messages }),
   addMessage: (message) =>
     set((s) => ({ messages: [...s.messages, message] })),

@@ -21,9 +21,11 @@ from slowapi.util import get_remote_address
 from loguru import logger
 import json
 
+import asyncio
+
 from app.core.config import settings
 from app.core.dependencies import get_current_user
-from app.db.session import get_db
+from app.db.session import AsyncSessionLocal, get_db
 from app.models.user import User
 from app.schemas.chat import (
     ChatRequest,
@@ -48,6 +50,69 @@ from app.rag.parsers import (
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
+
+# Idle interval after which the SSE endpoint emits a keep-alive comment frame.
+SSE_HEARTBEAT_SECONDS = settings.SSE_HEARTBEAT_SECONDS
+
+
+def _sse(payload: dict) -> str:
+    """Encode one SSE data frame."""
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+async def _stream_with_heartbeat(source, interval: float = SSE_HEARTBEAT_SECONDS):
+    """Yield ``(kind, value)`` tuples from ``source``, emitting heartbeats.
+
+    A producer task feeds a queue so the timeout only ever cancels
+    ``queue.get()`` — never the underlying LLM stream, which would corrupt it.
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def produce():
+        try:
+            async for token in source:
+                await queue.put(("token", token))
+        except Exception as e:  # noqa: BLE001 - surfaced to the caller as an event
+            await queue.put(("error", str(e)))
+        finally:
+            await queue.put(("eof", None))
+
+    task = asyncio.create_task(produce())
+    try:
+        while True:
+            try:
+                kind, value = await asyncio.wait_for(queue.get(), timeout=interval)
+            except asyncio.TimeoutError:
+                yield ("heartbeat", None)
+                continue
+            yield (kind, value)
+            if kind == "eof":
+                break
+    finally:
+        if not task.done():
+            task.cancel()
+
+
+async def _persist_assistant_message(session_id, content: str, rag_contexts) -> None:
+    """Store the assistant reply using a fresh DB session.
+
+    The request-scoped session may already be torn down when the client
+    disconnects mid-stream, so cleanup must not rely on it.
+    """
+    if not content.strip():
+        return
+    try:
+        async with AsyncSessionLocal() as save_db:
+            await ChatService(save_db).save_message(
+                session_id=session_id,
+                user_id=None,
+                role="assistant",
+                content=content,
+                context_used=[c.model_dump() for c in rag_contexts],
+            )
+            await save_db.commit()
+    except Exception as e:  # noqa: BLE001 - never let cleanup break the stream
+        logger.error(f"Failed to persist streamed reply for session {session_id}: {e}")
 
 
 @router.post("/", response_model=ChatResponse)
@@ -154,54 +219,89 @@ async def chat_stream(
         current_user, body.session_id, title=auto_title
     )
 
-    rag_contexts = []
-    if body.use_rag and current_user.organization_id:
-        rag_contexts = await rag_retriever.retrieve(
-            query=body.message,
-            organization_id=current_user.organization_id,
-        )
-
-    prior_messages = await chat_service.get_session_messages(session.id, limit=20)
-    history = [{"role": m.role, "content": m.content} for m in prior_messages]
-
-    messages = rag_retriever.build_augmented_prompt(
-        user_message=body.message,
-        contexts=rag_contexts,
-        conversation_history=history,
-    )
-
     await chat_service.save_message(
         session_id=session.id,
         user_id=current_user.id,
         role="user",
         content=body.message,
     )
+    # Commit now: if the client disconnects mid-stream the request-scoped
+    # session may never commit, which would drop the question and leave an
+    # orphaned answer behind.
+    await db.commit()
 
-    full_response = []
+    session_id = session.id
+    session_title = session.title
+    org_id = current_user.organization_id
 
     async def generate():
+        # Retrieval and prompt building run *inside* the stream so the client
+        # gets a frame straight away instead of waiting on an embedding call.
+        full_response: list[str] = []
+        rag_contexts: list = []
         try:
-            # Send session info first
-            yield f"data: {json.dumps({'type': 'session', 'session_id': str(session.id), 'title': session.title})}\n\n"
+            yield _sse({
+                "type": "session",
+                "session_id": str(session_id),
+                "title": session_title,
+            })
 
-            async for token in llm_service.stream_chat(messages):
-                full_response.append(token)
-                yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+            if body.use_rag and org_id:
+                yield _sse({"type": "status", "stage": "retrieving"})
+                rag_contexts = await rag_retriever.retrieve(
+                    query=body.message,
+                    organization_id=org_id,
+                )
+                yield _sse({
+                    "type": "context",
+                    "contexts": [c.model_dump() for c in rag_contexts],
+                })
 
-            # Save complete response
-            complete = "".join(full_response)
-            await chat_service.save_message(
-                session_id=session.id,
-                user_id=None,
-                role="assistant",
-                content=complete,
-                context_used=[c.model_dump() for c in rag_contexts],
+            prior_messages = await chat_service.get_session_messages(session_id, limit=20)
+            history = [{"role": m.role, "content": m.content} for m in prior_messages]
+
+            messages = rag_retriever.build_augmented_prompt(
+                user_message=body.message,
+                contexts=rag_contexts,
+                conversation_history=history,
             )
 
-            yield f"data: {json.dumps({'type': 'done', 'session_id': str(session.id)})}\n\n"
-        except Exception as e:
-            logger.error(f"Stream error: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'message': 'Stream failed'})}\n\n"
+            yield _sse({"type": "status", "stage": "generating"})
+
+            async for kind, value in _stream_with_heartbeat(
+                llm_service.stream_chat(messages)
+            ):
+                if kind == "heartbeat":
+                    yield ": ping\n\n"
+                elif kind == "token":
+                    full_response.append(value)
+                    yield _sse({"type": "token", "content": value})
+                elif kind == "error":
+                    raise RuntimeError(value)
+
+            yield _sse({"type": "done", "session_id": str(session_id)})
+        except asyncio.CancelledError:
+            # Client disconnected — keep whatever was generated (see finally).
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Stream error for session {session_id}: {e}")
+            yield _sse({"type": "error", "message": "Stream failed"})
+        finally:
+            # Runs on normal completion, error, and client disconnect alike, so
+            # a stopped generation is still saved instead of vanishing.
+            # It must be shielded: a disconnect cancels this task, and a bare
+            # await here would be cancelled too — silently losing the reply.
+            if full_response:
+                pending = asyncio.create_task(
+                    _persist_assistant_message(
+                        session_id, "".join(full_response), rag_contexts
+                    )
+                )
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError:
+                    # Client is gone; the write finishes in the background.
+                    pass
 
     return StreamingResponse(
         generate(),

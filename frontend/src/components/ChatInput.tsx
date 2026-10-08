@@ -1,15 +1,18 @@
 import { useState, useRef, useEffect } from 'react'
-import { Send, Loader2 } from 'lucide-react'
+import { Send, Square } from 'lucide-react'
 import clsx from 'clsx'
 
 interface Props {
   onSend: (text: string) => void
+  onStop?: () => void
+  streaming?: boolean
   disabled?: boolean
 }
 
-export default function ChatInput({ onSend, disabled }: Props) {
+export default function ChatInput({ onSend, onStop, streaming, disabled }: Props) {
   const [value, setValue] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const blocked = disabled || streaming
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -20,7 +23,7 @@ export default function ChatInput({ onSend, disabled }: Props) {
 
   const handleSend = () => {
     const trimmed = value.trim()
-    if (!trimmed || disabled) return
+    if (!trimmed || blocked) return
     onSend(trimmed)
     setValue('')
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
@@ -41,31 +44,38 @@ export default function ChatInput({ onSend, disabled }: Props) {
           value={value}
           onChange={e => setValue(e.target.value)}
           onKeyDown={handleKey}
-          placeholder="Ask anything... (Shift+Enter for new line)"
+          placeholder={streaming ? 'Generating… press stop to interrupt' : 'Ask anything... (Shift+Enter for new line)'}
           rows={1}
-          disabled={disabled}
+          disabled={blocked}
           className={clsx(
             'flex-1 bg-transparent text-gray-100 placeholder-gray-600 text-sm',
             'resize-none focus:outline-none leading-relaxed py-1',
             'min-h-[24px] max-h-[200px] overflow-y-auto',
-            disabled && 'opacity-50 cursor-not-allowed'
+            blocked && 'opacity-50 cursor-not-allowed'
           )}
         />
-        <button
-          onClick={handleSend}
-          disabled={disabled || !value.trim()}
-          className={clsx(
-            'flex-shrink-0 p-2.5 rounded-xl transition-all duration-150',
-            value.trim() && !disabled
-              ? 'bg-brand-600 hover:bg-brand-500 text-white shadow-lg shadow-brand-900/30 active:scale-95'
-              : 'bg-surface-200 text-gray-600 cursor-not-allowed'
-          )}
-        >
-          {disabled
-            ? <Loader2 className="w-4 h-4 animate-spin" />
-            : <Send className="w-4 h-4" />
-          }
-        </button>
+        {streaming ? (
+          <button
+            onClick={onStop}
+            title="Stop generating"
+            className="flex-shrink-0 p-2.5 rounded-xl bg-surface-200 hover:bg-surface-300 text-gray-300 transition-all duration-150 active:scale-95"
+          >
+            <Square className="w-4 h-4 fill-current" />
+          </button>
+        ) : (
+          <button
+            onClick={handleSend}
+            disabled={blocked || !value.trim()}
+            className={clsx(
+              'flex-shrink-0 p-2.5 rounded-xl transition-all duration-150',
+              value.trim() && !blocked
+                ? 'bg-brand-600 hover:bg-brand-500 text-white shadow-lg shadow-brand-900/30 active:scale-95'
+                : 'bg-surface-200 text-gray-600 cursor-not-allowed'
+            )}
+          >
+            <Send className="w-4 h-4" />
+          </button>
+        )}
       </div>
       <div className="px-4 pb-2 flex items-center gap-3">
         <span className="text-xs text-gray-700">Enter to send · Shift+Enter for newline</span>

@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     EMBEDDING_API_KEY: str = ""
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
 
+    # SSE — idle interval before sending a keep-alive comment frame.
+    # Lower it if a proxy in front of the app drops idle connections sooner.
+    SSE_HEARTBEAT_SECONDS: float = 15.0
+
     # RAG
     # Chunk size/overlap are counted in words for Latin text and in characters
     # for CJK text (Chinese has few spaces, so word counts collapse the file).

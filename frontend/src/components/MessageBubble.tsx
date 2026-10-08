@@ -10,9 +10,11 @@ import type { Message } from '@/types'
 
 interface Props {
   message: Message
+  /** Render the in-flight assistant reply (adds a caret). */
+  streaming?: boolean
 }
 
-export default function MessageBubble({ message }: Props) {
+export default function MessageBubble({ message, streaming }: Props) {
   const isUser = message.role === 'user'
   const [copied, setCopied] = useState(false)
 
@@ -73,6 +75,9 @@ export default function MessageBubble({ message }: Props) {
             >
               {message.content}
             </ReactMarkdown>
+            {streaming && (
+              <span className="inline-block w-1.5 h-4 ml-0.5 align-text-bottom bg-brand-400 animate-pulse" />
+            )}
           </div>
         )}
 

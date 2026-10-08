@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { chatApi } from '@/services/api'
+import { streamChat, type StreamHandle } from '@/services/stream'
 import { useChatStore } from '@/store/chatStore'
 import { useAuthStore } from '@/store/authStore'
 import Sidebar from '@/components/Sidebar'
@@ -10,20 +11,28 @@ import RAGPanel from '@/components/RAGPanel'
 import { Bot, Sparkles } from 'lucide-react'
 import type { Message } from '@/types'
 
+const STATUS_LABELS: Record<string, string> = {
+  retrieving: 'Searching your knowledge base…',
+  generating: 'Thinking…',
+}
+
 export default function ChatPage() {
   const { sessionId } = useParams()
   const navigate = useNavigate()
   const { user } = useAuthStore()
   const {
-    currentSessionId, setCurrentSession,
+    currentSessionId, setCurrentSession, setSessionId,
+    sessions, addSession, updateSessionTitle,
     messages, setMessages, addMessage,
-    isLoading, setLoading,
+    isStreaming, setStreaming, streamBuffer, appendStream, clearStream,
     ragContexts, setRagContexts,
     useRag,
   } = useChatStore()
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [showRag, setShowRag] = useState(false)
+  const [status, setStatus] = useState<string | null>(null)
+  const streamRef = useRef<StreamHandle | null>(null)
 
   // Load session from URL
   useEffect(() => {
@@ -47,10 +56,43 @@ export default function ChatPage() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isLoading])
+  }, [messages, isStreaming, streamBuffer])
 
-  const handleSend = async (text: string) => {
-    if (!text.trim() || isLoading) return
+  const finalizeStream = (errorText?: string) => {
+    const assistantText = useChatStore.getState().streamBuffer.trim()
+    const sid = useChatStore.getState().currentSessionId || ''
+
+    if (assistantText) {
+      // Keep whatever arrived — a stopped generation is still worth showing.
+      addMessage({
+        id: crypto.randomUUID(),
+        session_id: sid,
+        role: 'assistant',
+        content: assistantText,
+        tokens_used: 0,
+        context_used: [],
+        created_at: new Date().toISOString(),
+      })
+    } else if (errorText) {
+      addMessage({
+        id: crypto.randomUUID(),
+        session_id: sid,
+        role: 'assistant',
+        content: errorText,
+        tokens_used: 0,
+        context_used: [],
+        created_at: new Date().toISOString(),
+      })
+    }
+
+    clearStream()
+    setStreaming(false)
+    setStatus(null)
+    streamRef.current = null
+  }
+
+  const handleSend = (text: string) => {
+    if (!text.trim() || isStreaming) return
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
@@ -62,39 +104,68 @@ export default function ChatPage() {
       created_at: new Date().toISOString(),
     }
     addMessage(userMsg)
-    setLoading(true)
+    clearStream()
+    setStreaming(true)
+    setStatus(null)
 
-    try {
-      const { data } = await chatApi.send({
-        message: text,
-        session_id: currentSessionId || undefined,
-        use_rag: useRag,
-      })
+    const requestedSessionId = currentSessionId || undefined
 
-      // Update URL with session
-      if (!currentSessionId || currentSessionId !== data.session_id) {
-        setCurrentSession(data.session_id)
-        navigate(`/chat/${data.session_id}`, { replace: true })
-      }
+    streamRef.current = streamChat(
+      { message: text, session_id: requestedSessionId, use_rag: useRag },
+      {
+        onSession: (id, title) => {
+          if (!requestedSessionId) {
+            // New session: point at it (without wiping the message list) and
+            // surface it in the sidebar right away.
+            setSessionId(id)
+            navigate(`/chat/${id}`, { replace: true })
+            if (!useChatStore.getState().sessions.some((s) => s.id === id)) {
+              addSession({
+                id,
+                title,
+                is_active: true,
+                message_count: 0,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              })
+            }
+          } else {
+            updateSessionTitle(id, title)
+          }
+        },
+        onStatus: (stage) => setStatus(STATUS_LABELS[stage] || null),
+        onContext: (contexts) => {
+          setRagContexts(contexts)
+          if (contexts.length > 0) setShowRag(true)
+        },
+        onToken: appendStream,
+        onDone: () => finalizeStream(),
+        onError: (msg) => finalizeStream(msg),
+      },
+    )
+  }
 
-      addMessage(data.message)
-      setRagContexts(data.rag_context || [])
+  const handleStop = () => {
+    streamRef.current?.abort()
+    streamRef.current = null
+    // The backend persists what it already generated; mirror that locally.
+    finalizeStream()
+  }
 
-      if (data.rag_context?.length > 0) setShowRag(true)
-    } catch (err: any) {
-      const errMsg: Message = {
-        id: crypto.randomUUID(),
-        session_id: currentSessionId || '',
-        role: 'assistant',
-        content: err.response?.data?.detail || 'Something went wrong. Please try again.',
-        tokens_used: 0,
-        context_used: [],
-        created_at: new Date().toISOString(),
-      }
-      addMessage(errMsg)
-    } finally {
-      setLoading(false)
-    }
+  // Abort an in-flight stream when leaving the page.
+  useEffect(() => () => streamRef.current?.abort(), [])
+
+  // Rendered as a normal bubble so markdown/code render exactly like a
+  // finished message — the only difference is the caret.
+  const streamingStartedAt = useRef(new Date().toISOString())
+  const streamingMessage: Message = {
+    id: 'streaming',
+    session_id: currentSessionId || '',
+    role: 'assistant',
+    content: streamBuffer,
+    tokens_used: 0,
+    context_used: [],
+    created_at: streamingStartedAt.current,
   }
 
   return (
@@ -138,12 +209,20 @@ export default function ChatPage() {
                 ))
               )}
 
-              {isLoading && <TypingIndicator />}
+              {isStreaming && (
+                streamBuffer
+                  ? <MessageBubble message={streamingMessage} streaming />
+                  : <TypingIndicator label={status} />
+              )}
               <div ref={messagesEndRef} />
             </div>
 
             <div className="flex-shrink-0 px-4 pb-4">
-              <ChatInput onSend={handleSend} disabled={isLoading} />
+              <ChatInput
+                onSend={handleSend}
+                onStop={handleStop}
+                streaming={isStreaming}
+              />
             </div>
           </div>
 
@@ -182,18 +261,19 @@ function EmptyState() {
   )
 }
 
-function TypingIndicator() {
+function TypingIndicator({ label }: { label?: string | null }) {
   return (
     <div className="flex items-end gap-3 px-2 py-1 animate-fade-in">
       <div className="w-7 h-7 bg-brand-600/30 rounded-full flex items-center justify-center flex-shrink-0">
         <Bot className="w-3.5 h-3.5 text-brand-400" />
       </div>
-      <div className="glass border border-white/5 rounded-2xl rounded-bl-sm px-4 py-3">
+      <div className="glass border border-white/5 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-3">
         <div className="flex gap-1">
           {[0, 1, 2].map((i) => (
             <div key={i} className="w-1.5 h-1.5 bg-brand-400 rounded-full animate-typing" style={{ animationDelay: `${i * 0.2}s` }} />
           ))}
         </div>
+        {label && <span className="text-xs text-gray-500">{label}</span>}
       </div>
     </div>
   )
