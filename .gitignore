@@ -26,3 +26,5 @@ uploads/
 .DS_Store
 .idea/
 .vscode/
+documents/*
+!documents/README.md

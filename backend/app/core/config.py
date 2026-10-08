@@ -47,8 +47,10 @@ class Settings(BaseSettings):
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
 
     # RAG
+    # Chunk size/overlap are counted in words for Latin text and in characters
+    # for CJK text (Chinese has few spaces, so word counts collapse the file).
     RAG_TOP_K: int = 5
-    RAG_SIMILARITY_THRESHOLD: float = 0.7
+    RAG_SIMILARITY_THRESHOLD: float = 0.5
     RAG_CHUNK_SIZE: int = 512
     RAG_CHUNK_OVERLAP: int = 50
     EMBEDDING_DIMENSION: int = 1536

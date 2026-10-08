@@ -1,6 +1,7 @@
 """
 RAG retrieval pipeline - chunks documents, stores embeddings, retrieves relevant context
 """
+import re
 from typing import List, Optional
 from uuid import UUID
 
@@ -13,20 +14,90 @@ from app.models.chat import Document, DocumentChunk
 from app.rag.embeddings import embedding_service
 from app.schemas.chat import RAGContext
 
+# CJK ideographs, kana and hangul. Space-delimited tokenisation collapses these
+# into a handful of enormous "words", so they need character-based chunking.
+_CJK_RE = re.compile(
+    r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]"
+)
+# Split *after* sentence-ending punctuation, keeping the delimiter.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？；!?;\n])")
+
+# Above this share of CJK characters a document is chunked by character.
+CJK_RATIO_THRESHOLD = 0.1
+
 
 class TextChunker:
+    """Splits documents into overlapping chunks.
+
+    ``chunk_size``/``overlap`` are measured in **words for Latin text** and in
+    **characters for CJK text** — a Chinese document has few spaces, so word
+    counting there would collapse the whole file into one chunk.
+    """
+
     def __init__(self, chunk_size: int = 512, overlap: int = 50):
         self.chunk_size = chunk_size
         self.overlap = overlap
 
     def chunk(self, text: str) -> List[str]:
+        if not text.strip():
+            return []
+        if self._cjk_ratio(text) >= CJK_RATIO_THRESHOLD:
+            return self._chunk_cjk(text)
+        return self._chunk_words(text)
+
+    @staticmethod
+    def _cjk_ratio(text: str) -> float:
+        return len(_CJK_RE.findall(text)) / max(len(text), 1)
+
+    # ------------------------------------------------------------------
+    # Latin: split on whitespace
+    # ------------------------------------------------------------------
+    def _chunk_words(self, text: str) -> List[str]:
         words = text.split()
         chunks, i = [], 0
+        step = max(self.chunk_size - self.overlap, 1)
         while i < len(words):
             chunk_words = words[i: i + self.chunk_size]
             chunks.append(" ".join(chunk_words))
-            i += self.chunk_size - self.overlap
+            i += step
         return [c for c in chunks if c.strip()]
+
+    # ------------------------------------------------------------------
+    # CJK: pack sentences up to a character budget
+    # ------------------------------------------------------------------
+    def _chunk_cjk(self, text: str) -> List[str]:
+        size = max(self.chunk_size, 1)
+        units = self._sentence_units(text, size)
+
+        chunks: List[str] = []
+        current = ""
+        for unit in units:
+            if current and len(current) + len(unit) > size:
+                chunks.append(current)
+                # Carry the tail of the finished chunk so context spans the seam.
+                tail = current[-self.overlap:] if self.overlap > 0 else ""
+                current = tail + unit
+            else:
+                current += unit
+        if current.strip():
+            chunks.append(current)
+
+        return [c.strip() for c in chunks if c.strip()]
+
+    @staticmethod
+    def _sentence_units(text: str, size: int) -> List[str]:
+        """Sentences, with any sentence longer than ``size`` hard-sliced."""
+        units: List[str] = []
+        for sentence in _SENTENCE_SPLIT_RE.split(text):
+            if not sentence or not sentence.strip():
+                continue
+            if len(sentence) <= size:
+                units.append(sentence)
+            else:
+                units.extend(
+                    sentence[i: i + size] for i in range(0, len(sentence), size)
+                )
+        return units
 
 
 class RAGRetriever:

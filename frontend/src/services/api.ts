@@ -2,11 +2,44 @@ import axios, { AxiosError } from 'axios'
 
 const BASE_URL = import.meta.env.VITE_API_URL || '/api/v1'
 
+// No global Content-Type: axios sets `application/json` for objects and
+// `multipart/form-data` (with boundary) for FormData automatically. Pinning
+// it to JSON here breaks file uploads.
 export const api = axios.create({
   baseURL: BASE_URL,
   timeout: 30_000,
-  headers: { 'Content-Type': 'application/json' },
 })
+
+/**
+ * FastAPI returns a plain string for HTTPException but an array of
+ * {type, loc, msg, input} objects for 422 validation errors. Coerce either
+ * into a string so it is always safe to render.
+ */
+export function getApiError(error: unknown, fallback = 'Something went wrong'): string {
+  const res = (error as AxiosError<{ detail?: unknown }>)?.response
+  const detail = res?.data?.detail
+
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map((d) => (d as { msg?: string })?.msg)
+      .filter((m): m is string => Boolean(m))
+    if (msgs.length) return msgs.join('; ')
+  }
+
+  // Proxy/nginx errors (413, 502, ...) return HTML, not JSON — map the status
+  // so the user gets something actionable instead of a generic message.
+  switch (res?.status) {
+    case 413:
+      return 'File is too large to upload.'
+    case 502:
+    case 503:
+    case 504:
+      return 'Server is unavailable. Please try again in a moment.'
+    default:
+      return fallback
+  }
+}
 
 // Attach token to every request
 api.interceptors.request.use((config) => {
@@ -79,6 +112,13 @@ export const chatApi = {
 
   uploadDocument: (data: { title: string; content: string; source?: string; doc_type?: string }) =>
     api.post('/chat/documents', data),
+
+  uploadDocumentFile: (file: File, title?: string) => {
+    const form = new FormData()
+    form.append('file', file)
+    if (title) form.append('title', title)
+    return api.post('/chat/documents/upload', form)
+  },
 
   deleteDocument: (id: string) => api.delete(`/chat/documents/${id}`),
 }

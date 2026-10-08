@@ -4,7 +4,16 @@ Chat API routes with full RAG pipeline
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from slowapi import Limiter
@@ -12,6 +21,7 @@ from slowapi.util import get_remote_address
 from loguru import logger
 import json
 
+from app.core.config import settings
 from app.core.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.user import User
@@ -29,6 +39,12 @@ from app.schemas.chat import (
 from app.services.chat_service import ChatService
 from app.rag.retriever import RAGRetriever
 from app.rag.llm_service import llm_service
+from app.rag.parsers import (
+    DocumentParseError,
+    extract_text_from_bytes,
+    is_supported,
+    supported_extensions,
+)
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -305,6 +321,67 @@ async def upload_document(
     chunk_count = await rag.index_document(doc)
 
     logger.info(f"Document '{doc.title}' uploaded and indexed with {chunk_count} chunks")
+    return doc
+
+
+@router.post("/documents/upload", response_model=DocumentResponse, status_code=201)
+async def upload_document_file(
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a pdf/docx/md/txt file, extract its text and index it.
+
+    Text extraction covers text-based documents only — scanned/image-only
+    PDFs require OCR and will be rejected with a clear message.
+    """
+    from app.models.chat import Document
+
+    if not current_user.organization_id:
+        raise HTTPException(status_code=400, detail="User has no organization")
+
+    filename = file.filename or ""
+    if not is_supported(filename):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Unsupported file type '{filename}'. "
+                f"Supported: {', '.join(supported_extensions())}"
+            ),
+        )
+
+    max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    data = await file.read()
+    if len(data) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds the {settings.MAX_UPLOAD_SIZE_MB} MB upload limit",
+        )
+
+    try:
+        content = extract_text_from_bytes(filename, data)
+    except DocumentParseError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    doc = Document(
+        organization_id=current_user.organization_id,
+        title=title or file.filename.rsplit(".", 1)[0],
+        content=content,
+        source=filename,
+        doc_type=(file.filename.rsplit(".", 1)[-1].lower() if "." in filename else "text"),
+    )
+    db.add(doc)
+    await db.flush()
+    await db.refresh(doc)
+
+    rag = RAGRetriever(db)
+    chunk_count = await rag.index_document(doc)
+
+    logger.info(
+        f"Uploaded '{doc.title}' ({filename}) -> {len(content)} chars, "
+        f"{chunk_count} chunk(s)"
+    )
     return doc
 
 
