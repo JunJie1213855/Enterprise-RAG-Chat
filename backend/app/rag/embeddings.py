@@ -8,14 +8,14 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
 
-
+# 嵌入服务
 class EmbeddingService:
     def __init__(self):
         self.model = settings.OPENAI_EMBEDDING_MODEL
         self.dimension = settings.EMBEDDING_DIMENSION
         self._client = None
 
-    def _get_client(self):
+    def _get_client(self): # openai 的客户端获取，基于 api_key 和 base_url
         if not self._client:
             from openai import AsyncOpenAI
             self._client = AsyncOpenAI(
@@ -23,7 +23,8 @@ class EmbeddingService:
                 base_url=settings.embedding_base_url,
             )
         return self._client
-
+    
+    # 单次 embedding 文本
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def embed_text(self, text: str) -> List[float]:
         """Generate embedding for a single text."""
@@ -39,7 +40,7 @@ class EmbeddingService:
         except Exception as e:
             logger.error(f"Embedding error: {e}")
             return self._fallback_embedding(text)
-
+    # 批次 embedding 文本
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for multiple texts."""
@@ -56,7 +57,8 @@ class EmbeddingService:
         except Exception as e:
             logger.error(f"Batch embedding error: {e}")
             return [self._fallback_embedding(t) for t in texts]
-
+    
+    # 嵌入向量兜底机制，利用 文本的 hash 值随机生成嵌入向量
     def _fallback_embedding(self, text: str) -> List[float]:
         """Deterministic pseudo-embedding for when API is unavailable."""
         rng = np.random.default_rng(abs(hash(text)) % (2**32))
@@ -65,7 +67,8 @@ class EmbeddingService:
         if norm > 0:
             vec = vec / norm
         return vec.tolist()
-
+    
+    # 计算两个 Embedding 的余弦相似性
     def cosine_similarity(self, a: List[float], b: List[float]) -> float:
         va, vb = np.array(a), np.array(b)
         denom = np.linalg.norm(va) * np.linalg.norm(vb)

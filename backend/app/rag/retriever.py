@@ -12,20 +12,24 @@ from loguru import logger
 from app.core.config import settings
 from app.models.chat import Document, DocumentChunk
 from app.rag.embeddings import embedding_service
+from app.rag.prompt import build_augmented_prompt
 from app.schemas.chat import RAGContext
 
+# CJK 正则表达式
 # CJK ideographs, kana and hangul. Space-delimited tokenisation collapses these
 # into a handful of enormous "words", so they need character-based chunking.
 _CJK_RE = re.compile(
     r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]"
 )
+
+# 句子分割器
 # Split *after* sentence-ending punctuation, keeping the delimiter.
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？；!?;\n])")
 
 # Above this share of CJK characters a document is chunked by character.
 CJK_RATIO_THRESHOLD = 0.1
 
-
+# 文本分块器
 class TextChunker:
     """Splits documents into overlapping chunks.
 
@@ -33,11 +37,11 @@ class TextChunker:
     **characters for CJK text** — a Chinese document has few spaces, so word
     counting there would collapse the whole file into one chunk.
     """
-
+    # 初始化：分块大小，重叠样本数量
     def __init__(self, chunk_size: int = 512, overlap: int = 50):
         self.chunk_size = chunk_size
         self.overlap = overlap
-
+    # 分块 API
     def chunk(self, text: str) -> List[str]:
         if not text.strip():
             return []
@@ -99,7 +103,7 @@ class TextChunker:
                 )
         return units
 
-
+# RAG 检索器
 class RAGRetriever:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -253,31 +257,10 @@ class RAGRetriever:
         conversation_history: List[dict],
         system_prompt: Optional[str] = None,
     ) -> List[dict]:
-        """Build the full message list for the LLM."""
-        base_system = system_prompt or (
-            "You are a helpful enterprise AI assistant. "
-            "Answer questions accurately and concisely based on the provided context. "
-            "If the context does not contain enough information, say so clearly."
+        """Build the full message list for the LLM (shared with LightRAG)."""
+        return build_augmented_prompt(
+            user_message=user_message,
+            contexts=contexts,
+            conversation_history=conversation_history,
+            system_prompt=system_prompt,
         )
-
-        if contexts:
-            context_block = "\n\n".join(
-                f"[Source: {c.document_title}]\n{c.content}" for c in contexts
-            )
-            system_content = (
-                f"{base_system}\n\n"
-                f"## Relevant Context\n{context_block}\n\n"
-                "Use the context above to answer the user's question. "
-                "Cite the source when referencing specific information."
-            )
-        else:
-            system_content = base_system
-
-        messages = [{"role": "system", "content": system_content}]
-
-        # Last N turns of history (keep context window manageable)
-        for msg in conversation_history[-10:]:
-            messages.append({"role": msg["role"], "content": msg["content"]})
-
-        messages.append({"role": "user", "content": user_message})
-        return messages

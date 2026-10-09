@@ -50,18 +50,27 @@ services:
     container_name: chatbot_backend
     restart: unless-stopped
     env_file: .env
+    # WORKAROUND: this Docker/WSL2 host has corrupted container-to-container
+    # networking on user-defined bridges (compose containers are unreachable
+    # from each other while `docker run` containers are fine). Running the
+    # backend on the host network sidesteps the broken bridge entirely: it
+    # reaches Postgres/Redis through their published host ports, which are
+    # verified working. Revert to the bridge once Docker networking is healthy.
+    network_mode: host
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-chatbot}:${POSTGRES_PASSWORD:-chatbot_pass}@db:5432/${POSTGRES_DB:-chatbot_db}
-      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_pass}@redis:6379/0
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-chatbot}:${POSTGRES_PASSWORD:-chatbot_pass}@127.0.0.1:5432/${POSTGRES_DB:-chatbot_db}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_pass}@127.0.0.1:6380/0
     volumes:
       - backend_logs:/app/logs
       - backend_uploads:/app/uploads
+      # LightRAG knowledge-graph / vector / kv files (one dir per workspace)
+      - lightrag_data:/app/lightrag_data
       # Ingest tooling + the folder you drop files into (run via
       #   docker compose exec backend python scripts/ingest.py /app/documents)
       - ./scripts:/app/scripts:ro
       - ./documents:/app/documents:ro
-    ports:
-      - "8000:8000"
+    # ports are omitted: network_mode: host exposes 8000 directly on the host,
+    # and Docker rejects `ports` alongside host networking.
     depends_on:
       db:
         condition: service_healthy
@@ -73,8 +82,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 40s
-    networks:
-      - chatbot_network
 
   # React Frontend
   frontend:
@@ -88,6 +95,10 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    # The backend now lives on the host network, so nginx proxies to the host
+    # gateway rather than the `backend` service name.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - chatbot_network
 
@@ -96,6 +107,7 @@ volumes:
   redis_data:
   backend_logs:
   backend_uploads:
+  lightrag_data:
 
 networks:
   chatbot_network:

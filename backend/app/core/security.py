@@ -12,15 +12,15 @@ from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-
+# 密码确认
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
-
+# 密码哈希值获取
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
-
+# 可接收 token 创建
 def create_access_token(
     data: dict,
     expires_delta: Optional[timedelta] = None,
@@ -39,7 +39,7 @@ def create_refresh_token(data: dict) -> str:
     to_encode.update({"exp": expire, "type": "refresh"})
     return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
-
+# token 解码
 def decode_token(token: str) -> Optional[dict]:
     try:
         payload = jwt.decode(
@@ -51,7 +51,7 @@ def decode_token(token: str) -> Optional[dict]:
     except JWTError:
         return None
 
-
+# 密码长度校验
 def validate_password_strength(password: str) -> tuple[bool, str]:
     """Validate password meets security requirements."""
     if len(password) < 8:

@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+venv/
+.venv/
+
+# App runtime artifacts
+logs/
+uploads/
+.env
+
+# Vendored LightRAG: ship only the installable package + metadata.
+# Without this the build context carries a 147 MB repo (~118 MB of it .git).
+thirdparty/LightRAG/.git
+thirdparty/LightRAG/tests
+thirdparty/LightRAG/lightrag_webui
+thirdparty/LightRAG/docs
+thirdparty/LightRAG/examples
+thirdparty/LightRAG/reproduce
+thirdparty/LightRAG/k8s-deploy
+thirdparty/LightRAG/assets
+thirdparty/LightRAG/README.assets
+thirdparty/LightRAG/.github
+thirdparty/LightRAG/.claude
+thirdparty/LightRAG/.clinerules

@@ -108,6 +108,10 @@ export const chatApi = {
 
   deleteSession: (id: string) => api.delete(`/chat/sessions/${id}`),
 
+  /** Knowledge graph for the caller's organization (nodes + edges). */
+  getGraph: (params: { label?: string; max_depth?: number; max_nodes?: number } = {}) =>
+    api.get('/chat/graph', { params }),
+
   getDocuments: () => api.get('/chat/documents'),
 
   uploadDocument: (data: { title: string; content: string; source?: string; doc_type?: string }) =>

@@ -15,7 +15,7 @@ from app.services.user_service import UserService
 
 security = HTTPBearer()
 
-
+# 获取当前用户的信息
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),

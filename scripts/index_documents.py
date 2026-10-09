@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
 from app.db.session import AsyncSessionLocal
 from app.models.chat import Document
-from app.rag.retriever import RAGRetriever
+from app.rag.factory import get_retriever
 from sqlalchemy import select
 from loguru import logger
 
@@ -23,7 +23,7 @@ async def index_all():
         docs = list(result.scalars().all())
         logger.info(f"Found {len(docs)} documents to index")
 
-        retriever = RAGRetriever(db)
+        retriever = get_retriever(db)
         total_chunks = 0
 
         for doc in docs:

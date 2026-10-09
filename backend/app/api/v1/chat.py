@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -39,7 +40,8 @@ from app.schemas.chat import (
     MessageResponse,
 )
 from app.services.chat_service import ChatService
-from app.rag.retriever import RAGRetriever
+from app.rag.factory import get_retriever
+from app.rag.ingest import index_document
 from app.rag.llm_service import llm_service
 from app.rag.parsers import (
     DocumentParseError,
@@ -48,24 +50,28 @@ from app.rag.parsers import (
     supported_extensions,
 )
 
+# API 路由
 router = APIRouter()
+# 限制器
 limiter = Limiter(key_func=get_remote_address)
 
 # Idle interval after which the SSE endpoint emits a keep-alive comment frame.
 SSE_HEARTBEAT_SECONDS = settings.SSE_HEARTBEAT_SECONDS
 
 
+# 编码
 def _sse(payload: dict) -> str:
     """Encode one SSE data frame."""
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
-
+# 流式协议 + 心跳机制
 async def _stream_with_heartbeat(source, interval: float = SSE_HEARTBEAT_SECONDS):
     """Yield ``(kind, value)`` tuples from ``source``, emitting heartbeats.
 
     A producer task feeds a queue so the timeout only ever cancels
     ``queue.get()`` — never the underlying LLM stream, which would corrupt it.
     """
+    # 异步队列
     queue: asyncio.Queue = asyncio.Queue()
 
     async def produce():
@@ -76,7 +82,7 @@ async def _stream_with_heartbeat(source, interval: float = SSE_HEARTBEAT_SECONDS
             await queue.put(("error", str(e)))
         finally:
             await queue.put(("eof", None))
-
+    # 执行生产任务
     task = asyncio.create_task(produce())
     try:
         while True:
@@ -115,6 +121,7 @@ async def _persist_assistant_message(session_id, content: str, rag_contexts) -> 
         logger.error(f"Failed to persist streamed reply for session {session_id}: {e}")
 
 
+# ！！！ 核心问答 API，用户输入提示词，RAG处理 + 传输
 @router.post("/", response_model=ChatResponse)
 @limiter.limit("30/minute")
 async def chat(
@@ -137,7 +144,7 @@ async def chat(
         raise HTTPException(status_code=400, detail="Message too long (max 10,000 chars)")
 
     chat_service = ChatService(db)
-    rag_retriever = RAGRetriever(db)
+    rag_retriever = get_retriever(db)
 
     # 1. Session
     auto_title = await chat_service.auto_title_from_message(body.message)
@@ -174,7 +181,7 @@ async def chat(
 
     # 6. Call LLM
     try:
-        response_text, tokens_used = await llm_service.chat(messages)
+        response_text, tokens_used = await llm_service.chat(messages) # 调用 API
     except Exception as e:
         logger.error(f"LLM call failed: {e}")
         raise HTTPException(status_code=503, detail="AI service temporarily unavailable")
@@ -199,6 +206,7 @@ async def chat(
     )
 
 
+# 流式问答
 @router.post("/stream")
 @limiter.limit("20/minute")
 async def chat_stream(
@@ -212,7 +220,7 @@ async def chat_stream(
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
     chat_service = ChatService(db)
-    rag_retriever = RAGRetriever(db)
+    rag_retriever = get_retriever(db)
 
     auto_title = await chat_service.auto_title_from_message(body.message)
     session = await chat_service.get_or_create_session(
@@ -314,7 +322,7 @@ async def chat_stream(
 
 
 # ------------------------------------------------------------------
-# Sessions
+# Sessions 获取所有 session，并且列出来
 # ------------------------------------------------------------------
 
 @router.get("/sessions", response_model=SessionListResponse)
@@ -346,7 +354,7 @@ async def list_sessions(
 
     return SessionListResponse(sessions=session_responses, total=total)
 
-
+# 获取 session_id 对应的 session 信息
 @router.get("/sessions/{session_id}", response_model=SessionDetailResponse)
 async def get_session(
     session_id: UUID,
@@ -397,6 +405,7 @@ async def delete_session(
 @router.post("/documents", response_model=DocumentResponse, status_code=201)
 async def upload_document(
     body: DocumentUploadRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -417,8 +426,7 @@ async def upload_document(
     await db.flush()
     await db.refresh(doc)
 
-    rag = RAGRetriever(db)
-    chunk_count = await rag.index_document(doc)
+    chunk_count = await index_document(doc, db, background=background_tasks)
 
     logger.info(f"Document '{doc.title}' uploaded and indexed with {chunk_count} chunks")
     return doc
@@ -426,6 +434,7 @@ async def upload_document(
 
 @router.post("/documents/upload", response_model=DocumentResponse, status_code=201)
 async def upload_document_file(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     title: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
@@ -475,8 +484,7 @@ async def upload_document_file(
     await db.flush()
     await db.refresh(doc)
 
-    rag = RAGRetriever(db)
-    chunk_count = await rag.index_document(doc)
+    chunk_count = await index_document(doc, db, background=background_tasks)
 
     logger.info(
         f"Uploaded '{doc.title}' ({filename}) -> {len(content)} chars, "

@@ -42,7 +42,7 @@ from app.rag.parsers import (  # noqa: E402
     extract_text,
     supported_extensions,
 )
-from app.rag.retriever import RAGRetriever  # noqa: E402
+from app.rag.ingest import index_document  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 
 # Organization that owns the imported documents. Defaults to the seeded org.
@@ -92,7 +92,6 @@ async def ingest(
     indexed = 0
 
     async with AsyncSessionLocal() as db:
-        retriever = RAGRetriever(db)
 
         for path in files:
             source = str(path.resolve())
@@ -133,7 +132,7 @@ async def ingest(
             await db.refresh(doc)
 
             try:
-                chunk_count = await retriever.index_document(doc)
+                chunk_count = await index_document(doc, db)
             except Exception as e:
                 await db.rollback()
                 logger.error(f"FAIL  '{doc_title}': indexing error: {e}")

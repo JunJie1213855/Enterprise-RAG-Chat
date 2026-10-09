@@ -36,7 +36,7 @@ def is_supported(filename: str) -> bool:
 def supported_extensions() -> list[str]:
     return sorted(SUPPORTED_EXTENSIONS)
 
-
+# 文本提取器
 def extract_text_from_bytes(filename: str, data: bytes) -> str:
     """Extract plain text from raw file bytes.
 
@@ -53,11 +53,11 @@ def extract_text_from_bytes(filename: str, data: bytes) -> str:
     if not data:
         raise DocumentParseError(f"'{filename}' is empty")
 
-    if suffix == ".pdf":
+    if suffix == ".pdf": # pdf 提取
         text = _extract_pdf(data, filename)
-    elif suffix == ".docx":
+    elif suffix == ".docx":# word 文本提取
         text = _extract_docx(data, filename)
-    else:  # .md / .markdown / .txt
+    else:  # .md / .markdown / .txt 其他文本
         text = _extract_plain(data, filename)
 
     text = text.strip()

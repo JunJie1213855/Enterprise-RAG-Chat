@@ -8,6 +8,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from app.core.config import settings
 
 
+# LLM 服务，包含流式问答和非流式问答
 class LLMService:
     def __init__(self):
         self._client = None
@@ -21,6 +22,7 @@ class LLMService:
             )
         return self._client
 
+    # 非流式问答
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def chat(
         self,
@@ -28,21 +30,30 @@ class LLMService:
         model: Optional[str] = None,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
+        response_format: Optional[dict] = None,
     ) -> tuple[str, int]:
         """
         Send messages to LLM and return (response_text, total_tokens).
         Falls back to a stub response if no API key is configured.
+
+        ``response_format`` is passed through for structured-output callers
+        (e.g. LightRAG's entity/keyword extraction, which needs JSON).
         """
         if not settings.llm_api_key:
             return self._stub_response(messages), 0
 
         client = self._get_client()
         try:
+            kwargs = {}
+            if response_format is not None:
+                kwargs["response_format"] = response_format
+
             response = await client.chat.completions.create(
                 model=model or settings.OPENAI_MODEL,
                 messages=messages,
                 max_tokens=max_tokens or settings.OPENAI_MAX_TOKENS,
                 temperature=temperature if temperature is not None else settings.OPENAI_TEMPERATURE,
+                **kwargs,
             )
             content = response.choices[0].message.content or ""
             tokens = response.usage.total_tokens if response.usage else 0
@@ -50,7 +61,7 @@ class LLMService:
         except Exception as e:
             logger.error(f"LLM chat error: {e}")
             raise
-
+    # 流式问答
     async def stream_chat(
         self,
         messages: List[dict],
@@ -94,5 +105,5 @@ class LLMService:
             "LLM_BASE_URL (or OPENAI_BASE_URL) in the .env file and restart the server."
         )
 
-
+# 单例
 llm_service = LLMService()

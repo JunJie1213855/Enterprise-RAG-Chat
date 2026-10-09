@@ -16,10 +16,10 @@ from loguru import logger
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.db.session import engine, Base
-from app.api.v1 import auth, chat, admin, health
+from app.api.v1 import auth, chat, admin, health, graph
 from app.core.middleware import AuditLogMiddleware, RequestIDMiddleware
 
-
+# 循环调用其
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
@@ -53,11 +53,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Rate limiting
+# Rate limiting 频率限制
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS
+# CORS 跨域请求
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
@@ -73,7 +73,7 @@ if settings.ENVIRONMENT == "production":
         allowed_hosts=settings.ALLOWED_HOSTS,
     )
 
-# Custom middlewares
+# Custom middlewares 
 app.add_middleware(AuditLogMiddleware)
 app.add_middleware(RequestIDMiddleware)
 
@@ -101,13 +101,15 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# Include routers
+# Include routers 包含路由
 app.include_router(health.router, prefix="/api/v1", tags=["health"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["authentication"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["chat"])
+app.include_router(graph.router, prefix="/api/v1/chat", tags=["graph"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 
 
+# 根路由
 @app.get("/")
 async def root():
     return {

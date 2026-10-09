@@ -5,7 +5,7 @@ import {
   Plus, Bot, MessageSquare, Trash2, Settings,
   ChevronRight, LogOut, Users, LayoutDashboard,
   Database, ToggleLeft, ToggleRight, X, Menu,
-  Upload, FileText, Loader2,
+  Upload, FileText, Loader2, Share2,
 } from 'lucide-react'
 import { chatApi, getApiError } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
@@ -147,6 +147,10 @@ export default function Sidebar() {
         <button onClick={() => setShowDocs(true)} className="sidebar-item w-full">
           <Database className="w-4 h-4" />
           <span>Knowledge Base</span>
+        </button>
+        <button onClick={() => navigate('/graph')} className="sidebar-item w-full">
+          <Share2 className="w-4 h-4" />
+          <span>Knowledge Graph</span>
         </button>
         <button onClick={handleLogout} className="sidebar-item w-full text-red-500 hover:text-red-400">
           <LogOut className="w-4 h-4" />

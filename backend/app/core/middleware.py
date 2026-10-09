@@ -8,6 +8,7 @@ from starlette.requests import Request
 from loguru import logger
 
 
+# 给每个请求添加 ID
 class RequestIDMiddleware(BaseHTTPMiddleware):
     """Add unique request ID to each request."""
     
@@ -18,7 +19,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         response.headers["X-Request-ID"] = request_id
         return response
 
-
+# 自动日志记录中间件
 class AuditLogMiddleware(BaseHTTPMiddleware):
     """Log all API requests for audit purposes."""
     
