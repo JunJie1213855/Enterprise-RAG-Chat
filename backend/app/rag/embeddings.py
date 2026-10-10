@@ -14,8 +14,8 @@ class EmbeddingService:
         self.model = settings.OPENAI_EMBEDDING_MODEL
         self.dimension = settings.EMBEDDING_DIMENSION
         self._client = None
-
-    def _get_client(self): # openai 的客户端获取，基于 api_key 和 base_url
+    # openai 的客户端获取，基于 api_key 和 base_url
+    def _get_client(self): 
         if not self._client:
             from openai import AsyncOpenAI
             self._client = AsyncOpenAI(
@@ -24,7 +24,7 @@ class EmbeddingService:
             )
         return self._client
     
-    # 单次 embedding 文本
+    # 单次文本 embedding
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def embed_text(self, text: str) -> List[float]:
         """Generate embedding for a single text."""
@@ -40,7 +40,7 @@ class EmbeddingService:
         except Exception as e:
             logger.error(f"Embedding error: {e}")
             return self._fallback_embedding(text)
-    # 批次 embedding 文本
+    # 批次文本 embedding
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for multiple texts."""

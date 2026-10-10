@@ -103,7 +103,7 @@ class TextChunker:
                 )
         return units
 
-# RAG 检索器
+# 朴素 RAG 检索器
 class RAGRetriever:
     def __init__(self, db: AsyncSession):
         self.db = db

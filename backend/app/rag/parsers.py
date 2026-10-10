@@ -68,7 +68,7 @@ def extract_text_from_bytes(filename: str, data: bytes) -> str:
         )
     return text
 
-
+# 外部接口 API
 def extract_text(path: Union[str, Path]) -> str:
     """Extract plain text from a file on disk."""
     p = Path(path)
@@ -88,7 +88,7 @@ def _extract_plain(data: bytes, filename: str) -> str:
         logger.warning(f"'{filename}' is not valid UTF-8; decoding with errors='replace'")
         return data.decode("utf-8", errors="replace")
 
-
+# pdf 提取
 def _extract_pdf(data: bytes, filename: str) -> str:
     """PyMuPDF first, pypdf as fallback.
 
@@ -110,7 +110,7 @@ def _extract_pdf(data: bytes, filename: str) -> str:
     logger.warning(f"PyMuPDF produced no text for '{filename}'; falling back to pypdf")
     return _extract_pdf_pypdf(data, filename)
 
-
+# 利用 mupdf 提取 pdf 文本
 def _extract_pdf_mupdf(data: bytes, filename: str) -> str:
     import pymupdf
 
@@ -124,7 +124,7 @@ def _extract_pdf_mupdf(data: bytes, filename: str) -> str:
     except Exception as e:
         raise DocumentParseError(f"Failed to read PDF '{filename}': {e}") from e
 
-
+# 利用 pypdf 提取 pdf 文本
 def _extract_pdf_pypdf(data: bytes, filename: str) -> str:
     from io import BytesIO
 
@@ -151,7 +151,7 @@ def _extract_pdf_pypdf(data: bytes, filename: str) -> str:
     except Exception as e:
         raise DocumentParseError(f"Failed to read PDF '{filename}': {e}") from e
 
-
+# word 文本提取
 def _extract_docx(data: bytes, filename: str) -> str:
     from io import BytesIO
 

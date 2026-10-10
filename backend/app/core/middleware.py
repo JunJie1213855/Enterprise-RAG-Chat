@@ -10,7 +10,7 @@ from loguru import logger
 from app.core import metrics
 
 
-# 给每个请求添加 ID
+# 请求ID中间件：给每个请求添加 ID
 class RequestIDMiddleware(BaseHTTPMiddleware):
     """Add unique request ID to each request."""
     
@@ -21,7 +21,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         response.headers["X-Request-ID"] = request_id
         return response
 
-# 自动日志记录中间件
+# 自动日志记录中间件：添加日志
 class AuditLogMiddleware(BaseHTTPMiddleware):
     """Log all API requests for audit purposes."""
     

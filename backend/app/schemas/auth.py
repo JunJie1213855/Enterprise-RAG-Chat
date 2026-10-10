@@ -1,5 +1,13 @@
 """
 Authentication Pydantic schemas
+
+1.用户注册请求
+2.用户登录请求
+3.Token响应
+4.刷新token
+5.用户响应
+6.组织响应
+7.密码更换请求
 """
 from datetime import datetime
 from typing import Optional

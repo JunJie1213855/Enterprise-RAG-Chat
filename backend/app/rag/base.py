@@ -16,7 +16,7 @@ from app.schemas.chat import RAGContext
 @runtime_checkable
 class Retriever(Protocol):
     """Organization-scoped retrieval over an indexed knowledge base."""
-
+    # 检索 API
     async def retrieve(
         self,
         query: str,
@@ -25,7 +25,7 @@ class Retriever(Protocol):
     ) -> List[RAGContext]:
         """Return the most relevant chunks for ``query`` within one org."""
         ...
-
+    # 索引建立 API
     async def index_document(self, document) -> int:
         """Chunk, embed and store ``document``. Returns the chunk count."""
         ...

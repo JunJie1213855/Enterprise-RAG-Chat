@@ -1,5 +1,15 @@
 """
 Chat Pydantic schemas
+1.聊天请求
+2.RAG上下文
+3.信息响应
+4.聊天响应
+5.会话响应
+6.会话列表响应
+7.会话详情响应
+8.文档上传请求
+9.文档响应
+10.会议名称更新请求
 """
 from datetime import datetime
 from typing import Optional, List, Any

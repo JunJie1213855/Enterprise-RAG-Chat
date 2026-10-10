@@ -14,15 +14,16 @@ def get_retriever(db=None) -> Retriever:
     """Return the retriever selected by ``settings.RAG_BACKEND``."""
     backend = (settings.RAG_BACKEND or "legacy").strip().lower()
 
+    # 混合检索 RAG
     if backend == "hybrid":
         # Both pipelines: vector + graph, fused by Reciprocal Rank Fusion.
         from app.rag.hybrid_retriever import HybridRetriever
         return HybridRetriever(db)
-
+    # 知识图谱 LightRAG
     if backend == "lightrag":
         from app.rag.lightrag_retriever import LightRAGRetriever
         return LightRAGRetriever(db)
-
+    # 传统朴素的向量相似性检索 RAG
     if backend != "legacy":
         logger.warning(f"Unknown RAG_BACKEND '{backend}'; falling back to 'legacy'")
 

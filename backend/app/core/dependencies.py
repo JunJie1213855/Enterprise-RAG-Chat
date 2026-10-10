@@ -54,7 +54,7 @@ async def get_current_user(
     
     return user
 
-
+# 当前管理员信息
 async def get_current_admin(
     current_user: User = Depends(get_current_user),
 ) -> User:
@@ -66,7 +66,7 @@ async def get_current_admin(
         )
     return current_user
 
-
+# 选择性的获取当前用户信息
 async def get_optional_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(
         HTTPBearer(auto_error=False)

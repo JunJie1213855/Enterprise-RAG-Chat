@@ -44,7 +44,7 @@ def pending_graph_tasks() -> List[Dict]:
     """Tasks currently keeping the graph behind the document list."""
     return sorted(_PENDING.values(), key=lambda t: t["document_id"])
 
-
+# 文档快照
 @dataclass(frozen=True)
 class DocumentSnapshot:
     """Plain copy of what both indexers need.
@@ -158,7 +158,7 @@ async def _graph_doc_id_for_path(rag, source: Optional[str]) -> Optional[str]:
         fallback = fallback or str(doc_id)
     return fallback
 
-
+# 从知识图谱中移除
 async def remove_from_graph(snapshot: DocumentSnapshot) -> None:
     """Delete a document's chunks and derived graph elements.
 

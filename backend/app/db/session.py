@@ -11,6 +11,7 @@ class Base(DeclarativeBase):
     pass
 
 
+# 创建数据库异步引擎
 engine = create_async_engine(
     settings.DATABASE_URL,
     pool_size=settings.DATABASE_POOL_SIZE,
@@ -19,6 +20,7 @@ engine = create_async_engine(
     echo=settings.DEBUG,
 )
 
+# 异步会议创建器
 AsyncSessionLocal = async_sessionmaker(
     engine,
     class_=AsyncSession,
@@ -26,6 +28,7 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 
+# 获取数据库处理器
 async def get_db():
     """Dependency for database session."""
     async with AsyncSessionLocal() as session:

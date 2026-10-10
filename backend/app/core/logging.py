@@ -6,7 +6,7 @@ import os
 from loguru import logger
 from app.core.config import settings
 
-
+# 日志启动
 def setup_logging():
     """Configure application logging."""
     logger.remove()

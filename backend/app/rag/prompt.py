@@ -9,6 +9,7 @@ from typing import List, Optional
 
 from app.schemas.chat import RAGContext
 
+# 默认系统提示词
 DEFAULT_SYSTEM_PROMPT = (
     "You are a helpful enterprise AI assistant. "
     "Answer questions accurately and concisely based on the provided context. "

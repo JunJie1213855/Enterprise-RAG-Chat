@@ -47,7 +47,7 @@ def _dedup_key(ctx: RAGContext) -> str:
     normalised = " ".join(ctx.content.split())[:200]
     return hashlib.sha1(normalised.encode("utf-8")).hexdigest()
 
-
+# 融合重排序
 def fuse_rankings(
     ranked_lists: Sequence[Sequence[RAGContext]],
     top_n: int,
@@ -93,7 +93,7 @@ def fuse_rankings(
         )
     return fused
 
-
+# 混合检索 RAG
 class HybridRetriever:
     """Queries both pipelines concurrently and fuses the results."""
 
