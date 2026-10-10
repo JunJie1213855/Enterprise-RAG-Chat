@@ -25,6 +25,7 @@ import os
 
 import asyncio
 
+from app.core import metrics
 from app.core.config import settings
 from app.core.dependencies import get_current_user
 from app.db.session import AsyncSessionLocal, get_db
@@ -98,6 +99,28 @@ async def _stream_with_heartbeat(source, interval: float = SSE_HEARTBEAT_SECONDS
     finally:
         if not task.done():
             task.cancel()
+
+
+def _reject_if_ingest_backlogged() -> None:
+    """入库背压：图谱队列过深时拒绝新上传。
+
+    不做这个『快速失败』，请求会一路走到后台任务队列里堆积 —— 每个任务都
+    持着一份文档全文等 LightRAG 的信号量，这是大批量灌库时内存被吃光的主因
+    （详见 app/core/metrics.py 的说明）。
+    """
+    from app.rag.ingest import pending_graph_tasks
+
+    pending = len(pending_graph_tasks())
+    if pending >= settings.MAX_PENDING_GRAPH_TASKS:
+        logger.warning(f"Ingest backlogged: {pending} graph jobs queued; rejecting upload")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"Knowledge base is busy — {pending} documents are still being "
+                f"indexed. Retry once the graph queue drains "
+                f"(check /api/v1/metrics → graph_queue.pending)."
+            ),
+        )
 
 
 async def _graph_processing_statuses(organization_id, docs: list) -> dict:
@@ -311,6 +334,8 @@ async def chat_stream(
         # gets a frame straight away instead of waiting on an embedding call.
         full_response: list[str] = []
         rag_contexts: list = []
+        metrics.sse_opened()
+        aborted = False
         try:
             yield _sse({
                 "type": "session",
@@ -354,11 +379,14 @@ async def chat_stream(
             yield _sse({"type": "done", "session_id": str(session_id)})
         except asyncio.CancelledError:
             # Client disconnected — keep whatever was generated (see finally).
+            aborted = True
             raise
         except Exception as e:  # noqa: BLE001
             logger.error(f"Stream error for session {session_id}: {e}")
             yield _sse({"type": "error", "message": "Stream failed"})
         finally:
+            # 活跃流计数在这里减一 —— 正常结束、报错、客户端断开都会走到
+            metrics.sse_closed(aborted)
             # Runs on normal completion, error, and client disconnect alike, so
             # a stopped generation is still saved instead of vanishing.
             # It must be shielded: a disconnect cancels this task, and a bare
@@ -479,6 +507,8 @@ async def upload_document(
     if not current_user.organization_id:
         raise HTTPException(status_code=400, detail="User has no organization")
 
+    _reject_if_ingest_backlogged()
+
     doc = Document(
         organization_id=current_user.organization_id,
         title=body.title,
@@ -513,6 +543,8 @@ async def upload_document_file(
 
     if not current_user.organization_id:
         raise HTTPException(status_code=400, detail="User has no organization")
+
+    _reject_if_ingest_backlogged()
 
     filename = file.filename or ""
     if not is_supported(filename): # 是否支持该文档格式的解析

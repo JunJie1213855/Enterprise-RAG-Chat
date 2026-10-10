@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     # Lower it if a proxy in front of the app drops idle connections sooner.
     SSE_HEARTBEAT_SECONDS: float = 15.0
 
+    # Ingest backpressure — reject a new upload once this many graph jobs are
+    # queued. Each queued job holds a full document snapshot in memory while it
+    # waits for LightRAG's internal semaphore (max_parallel_insert = 3), so an
+    # unbounded queue is the main way bulk ingestion exhausts memory.
+    MAX_PENDING_GRAPH_TASKS: int = 50
+
     # RAG 后端
     # Which retrieval implementation serves the chat pipeline:
     #   hybrid   -> BOTH, fused with Reciprocal Rank Fusion (default)

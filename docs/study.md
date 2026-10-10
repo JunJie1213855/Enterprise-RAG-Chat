@@ -14,7 +14,7 @@
 
 **每一步都用 Swagger 打一次接口。** 这个项目的价值一半在代码、一半在"它真的能跑"。脱离运行时读代码，你会丢掉大量判断依据（比如"这个阈值到底合不合适"）。
 
-后端总共 **3136 行**，规模不大，值得精读。
+后端总共 **3920 行**，规模不大，值得精读。
 
 ---
 
@@ -22,21 +22,25 @@
 
 | 文件 | 行数 | 优先级 | 说明 |
 |---|---|---|---|
-| `app/main.py` | ~118 | ⭐⭐⭐ 必读 | 应用装配、生命周期、路由挂载 |
-| `app/core/config.py` | ~125 | ⭐⭐⭐ 必读 | 全部配置项 |
-| `app/api/v1/chat.py` | 532 | ⭐⭐⭐ 精读 | 项目的心脏 |
-| `app/rag/retriever.py` | 263 | ⭐⭐⭐ 精读 | 向量检索 + 中文分块 |
-| `app/rag/lightrag_retriever.py` | ~261 | ⭐⭐ 进阶 | 图谱检索 |
-| `app/rag/ingest.py` | 84 | ⭐⭐ 进阶 | 统一入库入口（双写） |
+| `app/main.py` | 120 | ⭐⭐⭐ 必读 | 应用装配、生命周期、路由挂载 |
+| `app/core/config.py` | 130 | ⭐⭐⭐ 必读 | 全部配置项 |
+| `app/api/v1/chat.py` | **720** | ⭐⭐⭐ 精读 | 项目的心脏（对话 + 流式 + 文档） |
+| `app/rag/retriever.py` | 266 | ⭐⭐⭐ 精读 | 向量检索 + 中文分块 |
+| `app/rag/ingest.py` | **245** | ⭐⭐⭐ 精读 | 统一入库编排（同步向量 + 后台图谱） |
+| `app/rag/lightrag_retriever.py` | 285 | ⭐⭐ 进阶 | 图谱检索 + 唯一 file_path |
+| `app/rag/hybrid_retriever.py` | 188 | ⭐⭐ 进阶 | RRF 融合（默认模式） |
 | `app/rag/parsers.py` | 171 | ⭐⭐ | PDF/Word 文本抽取 |
 | `app/services/chat_service.py` | 167 | ⭐⭐ | 会话与消息的持久化 |
+| `app/core/metrics.py` | 146 | ⭐ | 运行时指标注册表 |
+| `app/api/v1/graph.py` | 74 | ⭐ | 图谱查询与任务状态 |
+| `app/api/v1/metrics.py` | 27 | ⭐ | 指标端点 |
 | `app/models/*.py` | ~180 | ⭐⭐ | 表结构 |
-| `app/schemas/*.py` | ~186 | ⭐ | 请求/响应契约 |
+| `app/schemas/*.py` | ~190 | ⭐ | 请求/响应契约 |
 | `app/api/v1/auth.py` | 152 | ⭐ | 认证 |
 | `app/core/dependencies.py` | 82 | ⭐⭐ | 依赖注入 |
 | `app/rag/llm_service.py` | 107 | ⭐⭐ | LLM 客户端 |
 | `app/rag/embeddings.py` | 75 | ⭐ | Embedding 客户端 |
-| `app/rag/prompt.py` | 44 | ⭐ | 提示词拼装 |
+| `app/rag/prompt.py` | 50 | ⭐ | 提示词拼装 |
 | `app/api/v1/admin.py` | 125 | — | 可跳过 |
 
 **别读** `thirdparty/LightRAG/` —— 147 MB 的第三方库。只需要知道它对外暴露什么（读 `lightrag_retriever.py` 即可）。
@@ -200,9 +204,13 @@ AND 1 - (embedding <=> ...) >= :threshold
 | 主题 | 文件 | 关键问题 |
 |---|---|---|
 | 图谱检索 | `rag/lightrag_retriever.py` | 为什么只取图谱层、生成仍用自己的 `llm_service`？ |
-| 统一入库 | `rag/ingest.py` | 双写为什么走 `BackgroundTasks`？为什么图谱失败不阻断主流程？ |
+| **唯一 file_path** | `rag/lightrag_retriever.py` | `graph_file_path` / `display_name` 为什么要拆开？LightRAG 的第二层内容哈希去重是什么？ |
+| **入库编排** | `rag/ingest.py` | 同步段与后台段为什么分开？背压为什么放在端点层？ |
 | 文档解析 | `rag/parsers.py` | 为什么 PDF 要 PyMuPDF 主 + pypdf 兜底？ |
 | 图谱接口 | `api/v1/graph.py` | 为什么按 `organization_id` 当 workspace？ |
+| **运行时指标** | `core/metrics.py` | `db_pool.utilisation` 怎么算的？为什么 `overflow()` 不能当上限用？ |
+
+> 完整的故障判读方法见 [architecture.md §11 可观测性](./architecture.md#11-可观测性)。
 
 ---
 

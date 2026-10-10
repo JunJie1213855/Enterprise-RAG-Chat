@@ -3,8 +3,8 @@
 > 多租户 SaaS 智能问答平台。**向量检索**与**知识图谱检索**双路并行、按排名融合；支持 PDF / Word / Markdown / 纯文本入库；SSE 流式作答；前端双主题。
 
 [![Backend](https://img.shields.io/badge/backend-FastAPI%200.111-009688)](#-技术栈)
-[![RAG](https://img.shields.io/badge/RAG-pgvector%20%2B%20LightRAG-8e44ad)](#-混合检索)
-[![Frontend](https://img.shields.io/badge/frontend-React%2018%20%2B%20Sigma.js-61dafb)](#-前端)
+[![RAG](https://img.shields.io/badge/RAG-pgvector%20%2B%20LightRAG-8e44ad)](#2️⃣-混合检索)
+[![Frontend](https://img.shields.io/badge/frontend-React%2018%20%2B%20Sigma.js-61dafb)](#️-前端)
 [![Deploy](https://img.shields.io/badge/deploy-Docker%20Compose-2496ed)](#-快速开始)
 
 ---
@@ -49,7 +49,7 @@
 <img src="docs/images/image.png" alt="知识图谱页面：环形布局的实体关系图" width="100%">
 </div>
 
-上图是**环形布局**，另有力导向 / 圆堆积 / 随机三种。悬停高亮邻域、点击隔离聚焦，详见[前端](#-前端)章节。
+上图是**环形布局**，另有力导向 / 圆堆积 / 随机三种。悬停高亮邻域、点击隔离聚焦，详见[前端](#️-前端)章节。
 
 > 截图分别取自**护眼系**（对话、图谱）与**明亮系**（知识库文档）。两套主题可随时切换。
 
@@ -139,7 +139,9 @@ sequenceDiagram
 2. **心跳用 producer 任务 + `asyncio.Queue`** —— 超时只取消 `queue.get()`，**绝不取消底层 LLM 流**（直接包 `wait_for` 会破坏 httpx 流）。
 3. **断连落库要 `asyncio.shield`** —— 任务被取消时 `finally` 里的 `await` 会被**立即再次取消**，写库代码根本不会执行。这是"停止生成不丢数据"的关键。
 
-### 2️⃣ 混合检索（默认 `RAG_BACKEND=hybrid`）
+### 2️⃣ 混合检索
+
+**默认 `RAG_BACKEND=hybrid`** —— 向量与图谱双路并发、按排名融合。
 
 ```mermaid
 flowchart LR
@@ -435,6 +437,7 @@ EMBEDDING_DIMENSION=1024        # ⚠️ 必须与 ORM、建表 DDL 三处一致
 | POST | `/chat/documents/{id}/restore` | **恢复**并重新灌图谱 |
 | GET | `/chat/graph` | **知识图谱**（`label` / `max_depth` / `max_nodes`） |
 | GET | `/chat/graph/status` | **图谱任务队列**（前端据此显示进度） |
+| GET | `/metrics` | **运行时指标**（见[可观测性](#-可观测性)） |
 </details>
 
 <details>
@@ -497,6 +500,107 @@ curl -N -X POST http://localhost:8000/api/v1/chat/stream \
 | **`audit_logs` 表是空表** | 表结构存在，但中间件只写文件日志、不写库；日志也没有记录认证用户身份。 |
 | **图谱实体名为英文** | LightRAG 的实体归一化会把中文实体转成英文（`张伟` → `Zhang Wei`）。 |
 | **扫描件 PDF 需 OCR** | `pypdf` / `PyMuPDF` 抽的是文本层，纯图片 PDF 会明确报错而不是产生空文档。 |
+| **容器无 CPU / 内存上限** | `docker-compose.yml` 未设资源限制。过载时容器会吃光宿主内存被 OOM Kill，**而不是自己降级**。生产部署应补 `deploy.resources.limits`。 |
+| **入库并发无闸门（有背压）** | 后台图谱任务不限并发，各持一份文档全文等待 LightRAG 的内部信号量（`max_parallel_insert = 3`）。队列超过 `MAX_PENDING_GRAPH_TASKS` 时新上传返回 429。 |
+
+---
+
+## 📊 可观测性
+
+### 指标端点
+
+```bash
+TOKEN=$(curl -s -X POST localhost:8000/api/v1/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"admin@example.com","password":"Admin@123"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+
+curl -s localhost:8000/api/v1/metrics -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
+```
+
+```jsonc
+{
+  "uptime_seconds": 3600.2,
+  "process": {
+    "rss_mb": 360.5,              // 进程常驻内存 —— 持续上涨是内存泄漏/积压的信号
+    "asyncio_tasks": 9,           // 活跃协程数 —— 反映并发压力
+    "lightrag_workspaces": 1
+  },
+  "db_pool": {
+    "size": 10, "checkedin": 0, "checkedout": 1,
+    "overflow_current": -9,
+    "limit": 30,                  // size + max_overflow
+    "utilisation": 0.033          // 接近 1.0 → 连接用尽，请求在排队
+  },
+  "graph_queue": {
+    "pending": 0,                 // 图谱任务积压 —— 大批量入库时持续上涨
+    "indexing": 0, "deleting": 0
+  },
+  "sse": {
+    "active": 0,                  // 活跃流式连接 —— 高并发问答时上涨
+    "opened_total": 12,
+    "aborted_total": 3            // 客户端中途断开
+  },
+  "requests": {
+    "total": 148, "by_status": { "200": 145, "429": 3 },
+    "duration_ms_avg": 223.4, "duration_ms_max": 4821.0
+  }
+}
+```
+
+### 用它诊断两条过载路径
+
+**大批量入库处理不过来**
+
+```
+graph_queue.pending  持续上涨且不回落   ← 处理速度跟不上灌入速度
+process.rss_mb       随之上涨          ← 每个排队任务持有一份文档全文在等
+db_pool.utilisation  接近 1.0          ← 并发上传把连接池占满
+```
+
+`MAX_PENDING_GRAPH_TASKS`（默认 50）是这条路径的**背压阀**：队列达到上限后，新的上传会被拒绝并返回 `429`，而不是继续堆积到内存耗尽。收到 429 说明系统在自我保护，等 `graph_queue.pending` 回落后重试即可。
+
+**高并发问答打爆服务器**
+
+```
+sse.active           显著高于往常       ← 并发流数量
+db_pool.utilisation  接近 1.0          ← 连接池成为瓶颈
+process.rss_mb       持续上涨          ← 每个流持有历史 + 上下文
+requests.by_status   出现 5xx          ← 但也可能直接 OOM，见下
+```
+
+> ⚠️ **当前容器没有内存上限**（`docker-compose.yml` 未设 `deploy.resources.limits`）。进程吃光宿主内存时会被内核 OOM Kill —— `rss_mb` 曲线会**突然中断**而不是平滑到顶。要区分「OOM 被杀」和「事件循环卡死」：
+>
+> ```bash
+> docker inspect chatbot_backend --format 'OOM={{.State.OOMKilled}} 重启={{.RestartCount}} 退出码={{.State.ExitCode}}'
+> # 退出码 137 = 128+9(SIGKILL) → 基本可确认 OOM
+> dmesg -T | grep -i "killed process" | tail -5
+> ```
+
+### 接入 Prometheus（可选）
+
+`/metrics` 返回 JSON，需要认证。Prometheus 抓取配置：
+
+```yaml
+scrape_configs:
+  - job_name: chatbot
+    metrics_path: /api/v1/metrics
+    authorization:
+      credentials_file: /etc/prometheus/chatbot.token   # access_token
+    static_configs:
+      - targets: ['localhost:8000']
+```
+
+> 需要 Prometheus 原生文本格式的话，把 `app/core/metrics.py` 的 `snapshot()` 输出转成 `# TYPE` / `name{label} value` 即可，指标语义不用动（约 20 行）。
+
+### 其他排查手段
+
+| 手段 | 用途 |
+|---|---|
+| `docker stats chatbot_backend` | 实时 CPU / 内存（容器外视角） |
+| `docker compose logs backend --since 5m \| grep RESPONSE` | 请求耗时趋势 —— 变长说明下游变慢 |
+| `docker compose logs backend \| grep "Graph indexed\|mirror failed"` | 入库进度与失败 |
+| `GET /api/v1/graph/status` | 同 `metrics.graph_queue`，前端横幅用的就是它 |
+| `docker compose exec db psql -U chatbot -d chatbot_db -c "SELECT state, count(*) FROM pg_stat_activity WHERE datname='chatbot_db' GROUP BY 1;"` | 数据库连接实况 |
+| `app.log`（`backend_logs` 卷） | 10 MB 轮转 / 保留 30 天，重启不丢 |
 
 ---
 

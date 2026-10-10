@@ -7,6 +7,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from loguru import logger
 
+from app.core import metrics
+
 
 # 给每个请求添加 ID
 class RequestIDMiddleware(BaseHTTPMiddleware):
@@ -39,8 +41,10 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
         )
         
         response = await call_next(request)
-        
+
         process_time = round((time.time() - start_time) * 1000, 2)
+        # 累积到运行时指标 —— /metrics 端点读的就是这里
+        metrics.record_request(request.url.path, response.status_code, process_time)
         
         # Log response
         logger.info(

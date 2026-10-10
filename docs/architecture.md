@@ -75,7 +75,8 @@ backend/app/
 │   ├── config.py               # Pydantic Settings（全部配置项）
 │   ├── security.py             # JWT、bcrypt
 │   ├── dependencies.py         # get_current_user 等 DI
-│   └── middleware.py           # 审计日志、request-id
+│   ├── middleware.py           # 审计日志、request-id、指标累积
+│   └── metrics.py              # ★ 运行时指标注册表（进程内累积）
 ├── db/session.py               # async engine + AsyncSessionLocal
 ├── models/                     # ORM：user.py / chat.py
 ├── schemas/                    # Pydantic 请求响应模型
@@ -209,6 +210,30 @@ LightRAG 以 **vendored 方式**放在 `backend/thirdparty/LightRAG`，Docker �
 
 > 相似度分数字段对图谱路径是**排名代理值**（`1 - rank*0.01`），不是余弦相似度 —— 两者不可直接比较，可比的只有"正确文档是否排第 1"。
 
+#### 5.3.1 为什么给 `file_path` 加唯一后缀
+
+LightRAG 的 `file_path` **同时承担两个职责** —— 它自己的文档写着：
+
+> *Canonical basename of the document... **UI display, filename-based dedup, and citation paths all share this value.**
+
+于是两个同名文件会互相干扰：
+
+| 场景 | 未处理时的后果 |
+|---|---|
+| 上传同名、**内容不同**的文件 | 第二个被判定"已存在" → **内容根本不进图谱** |
+| 删除其中一个 | 两者共享同一条图谱记录 → **误删另一个还在用的内容** |
+
+`lightrag_retriever.py` 把这两个职责拆开：
+
+```python
+graph_file_path(document)   # resume-zh_CN.pdf → resume-zh_CN__a6c11750.pdf   （唯一 id）
+display_name(file_path)     # 还原成 resume-zh_CN.pdf 展示给用户
+```
+
+后缀取文档 UUID 前 8 位。这样每次上传都是**独立条目**，删除也只影响自己。
+
+> **注意还有第二层去重**：LightRAG 同时按**内容哈希**去重（`utils_pipeline.get_duplicate_doc_by_content_hash`）。所以"同名同内容"仍会合并 —— 这是刻意的，避免同一篇文字重复抽实体、重复烧 token。真正被去重掉的记录会以 `dup-<hash>` 行存在，`status=failed`、`chunks=0`，**不是失败**，只是"已作为重复拒绝"。
+
 ### 5.4 统一入库入口与双写
 
 ```
@@ -259,9 +284,11 @@ organizations ──┬── users ──── chat_sessions ──── mess
 | POST | `/chat/stream` | **对话（SSE 流式）** |
 | GET/PATCH/DELETE | `/chat/sessions[/{id}]` | 会话管理 |
 | POST | `/chat/documents` | 粘贴文本入库 |
-| POST | `/chat/documents/upload` | **文件上传入库**（pdf/docx/md/txt，multipart） |
+| POST | `/chat/documents/upload` | **文件上传入库**（pdf/docx/md/txt，multipart；队列过深返回 429） |
 | GET/DELETE | `/chat/documents[/{id}]` | 文档列表 / 软删除 |
 | GET | `/chat/graph` | **知识图谱**（`label` / `max_depth` / `max_nodes`） |
+| GET | `/chat/graph/status` | 图谱任务队列（前端横幅据此显示进度） |
+| GET | `/metrics` | **运行时指标**（见 §11） |
 | GET | `/admin/stats` `/admin/users` `/admin/organization` | 管理端（需 admin 角色） |
 
 ---
@@ -304,6 +331,22 @@ organizations ──┬── users ──── chat_sessions ──── mess
 
 ## 10. 已知约束与设计权衡
 
+**`uvicorn --workers` 必须为 1（Dockerfile 里已锁死并注释）**
+LightRAG 的图谱是**进程内缓存**（`lightrag_retriever._ENGINES`），磁盘上是 NetworkX 文件。多 worker 时每个进程各持一份副本，写入互不可见：
+
+- 同一请求可能返回**不同图谱**（实测：连续请求的节点数在 206/211 之间交替）
+- 一次删除只在一个 worker 生效，下一个请求落到另一个 worker 就"看起来没删掉"
+- 两个进程并发写同一份 NetworkX 文件本身也不安全
+
+代价是无法靠加 worker 扩容。本应用是 LLM I/O 密集型，单进程异步足够；要扩容应加**主机**。
+
+**容器没有资源上限**
+`docker-compose.yml` 未设 `deploy.resources.limits`。过载时容器会吃光宿主内存被 OOM Kill，**而不是自己降级**。生产部署应补上 —— 让容器自己被限制并重启，比拖垮整台机器（连 `sshd` 一起）好得多。
+
+**入库并发无闸门，但有背压**
+后台图谱任务不限并发，每个都持一份**文档全文**在内存里等 LightRAG 的内部信号量（`max_parallel_insert = 3`）。因此大批量灌库时，内存占用 ≈ 队列深度 × 文档大小，而不是"正在处理的 3 份"。
+`MAX_PENDING_GRAPH_TASKS`（默认 50）是这条路径的背压阀：队列到顶后新上传返回 **429**，而不是继续堆积。
+
 **依赖版本陷阱（改动时务必回归）**
 LightRAG 的 `google-genai` 依赖强制 `httpx>=0.28.1`，而 `openai<2` 的 `AsyncHttpxClientWrapper` 在 httpx 0.28 下会崩（`AttributeError: _state`）。因此 `openai` 必须 ≥3.x。Dockerfile 中 **LightRAG 在 requirements 之前安装**，让本项目的 pin 拥有最终决定权。
 
@@ -323,7 +366,7 @@ LightRAG 的实体归一化会把中文实体转成英文（`张伟` → `Zhang 
 | `POST /auth/login` | `10/hour` |
 | `POST /auth/register` | `20/hour` |
 
-因此 `.env` 里的 `RATE_LIMIT_PER_MINUTE` / `_PER_HOUR` / `_PER_DAY` 三个配置项**只是定义了、没有被引用**，改了不生效。另外因为 `uvicorn --workers 2`，内存限流是**按进程**计数的，跨 worker 不共享配额（真实上限约为标注值的 2 倍，且分布不均）。要真正生效需把 slowapi 的 `storage_uri` 指向 Redis，并把限额改成从 settings 读取。
+因此 `.env` 里的 `RATE_LIMIT_PER_MINUTE` / `_PER_HOUR` / `_PER_DAY` 三个配置项**只是定义了、没有被引用**，改了不生效。要真正生效需把 slowapi 的 `storage_uri` 指向 Redis，并把限额改成从 settings 读取。届时也才能支持多 worker —— 现在限流按进程计数，多 worker 下配额不共享。
 
 **软删除的可见性**
 `is_active=false` 的文档会**静默退出检索**。若前端列表仍展示它，用户会以为它还在 —— 这是当前的一个待改进点。
@@ -332,3 +375,76 @@ LightRAG 的实体归一化会把中文实体转成英文（`张伟` → `Zhang 
 - 独立的压测报告（QPS / P95 / TTFT 基线）
 - 检索质量评测集与自动化回归
 - `.env` 尚未纳入密钥轮换流程
+- 容器资源上限（见上文「容器没有资源上限」）
+
+---
+
+## 11. 可观测性
+
+### 11.1 指标端点
+
+`GET /api/v1/metrics`（需认证）返回 JSON 快照。**不引入 prometheus_client** —— 单机部署下 curl 就能看懂，比接一整套监控栈更实际；转 Prometheus 文本格式只需改 `snapshot()` 的输出层（约 20 行），指标语义不变。
+
+```jsonc
+{
+  "process":     { "rss_mb": 360.5, "asyncio_tasks": 9, "lightrag_workspaces": 1 },
+  "db_pool":     { "size": 10, "checkedout": 1, "limit": 30, "utilisation": 0.033 },
+  "graph_queue": { "pending": 0, "indexing": 0, "deleting": 0 },
+  "sse":         { "active": 0, "opened_total": 12, "aborted_total": 3 },
+  "requests":    { "total": 148, "by_status": {…}, "duration_ms_avg": 223.4 }
+}
+```
+
+各字段的来源：
+
+| 指标 | 来源 | 为什么关心它 |
+|---|---|---|
+| `process.rss_mb` | `resource.getrusage` | 持续上涨 = 积压或泄漏；**OOM 时曲线突然中断而非平滑到顶** |
+| `process.asyncio_tasks` | `asyncio.all_tasks()` | 活跃协程数，反映并发压力 |
+| `db_pool.utilisation` | SQLAlchemy `engine.pool` | 接近 1.0 = 连接用尽，请求在排队 |
+| `graph_queue.*` | `ingest.pending_graph_tasks()` | 与 `/chat/graph/status` 同源 |
+| `sse.active` | `chat_stream` 的 finally 里增减 | 高并发问答的直接信号 |
+| `requests.*` | `AuditLogMiddleware` 累积 | 路径做了归一化（`{id}` 占位）避免基数爆炸 |
+
+> ⚠️ `pool.overflow()` 返回的是**当前溢出数（可为负）**，不是允许上限。上限必须取自配置 `POOL_SIZE + MAX_OVERFLOW`，否则会算出 `limit=1` 这种荒谬值。
+
+### 11.2 用它诊断两条过载路径
+
+**大批量入库处理不过来**
+
+```
+graph_queue.pending     持续上涨且不回落     ← 处理速度跟不上灌入速度
+process.rss_mb          随之上涨            ← 队列深度 × 文档大小，不是"正在处理的 3 份"
+db_pool.utilisation     接近 1.0            ← 并发上传把连接池占满
+```
+
+防控手段是 `MAX_PENDING_GRAPH_TASKS`（默认 50）—— 队列到顶后新上传返回 **429**（见 §10）。
+
+**高并发问答打爆服务器**
+
+```
+sse.active              显著高于往常
+db_pool.utilisation     接近 1.0
+process.rss_mb          持续上涨            ← 每个流持有历史 + 上下文
+```
+
+OOM 与事件循环卡死的区分方法：
+
+```bash
+docker inspect chatbot_backend --format 'OOM={{.State.OOMKilled}} 退出码={{.State.ExitCode}}'
+# 退出码 137 = 128+9(SIGKILL) → 基本可确认 OOM
+dmesg -T | grep -i "killed process" | tail -5
+```
+
+卡死时容器仍显示 `Up`，但 `/health` 超时 —— 因为它只测 `SELECT 1`，不反映事件循环是否还能调度。
+
+### 11.3 其他手段
+
+| 手段 | 用途 |
+|---|---|
+| `docker stats chatbot_backend` | 容器外视角的实时 CPU / 内存 |
+| `docker compose logs backend \| grep RESPONSE` | 请求耗时趋势 |
+| `app.log`（`backend_logs` 卷） | 10 MB 轮转 / 保留 30 天，重启不丢；请求行含 IP + UA |
+| `pg_stat_activity` | 数据库连接实况 |
+
+**已知的观测盲区**：日志**不记录认证用户身份**（只有 IP + UA），`audit_logs` 表是空的（中间件只写文件不写库）。因此"哪个账号做了什么"目前无法从服务端回答。

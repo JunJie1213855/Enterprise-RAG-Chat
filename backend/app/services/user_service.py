@@ -14,7 +14,7 @@ from app.models.user import User, Organization
 from app.core.security import get_password_hash, verify_password
 from app.schemas.auth import UserRegisterRequest
 
-
+# 用户服务
 class UserService:
     def __init__(self, db: AsyncSession):
         self.db = db
