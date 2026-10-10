@@ -17,6 +17,7 @@ would be far too expensive.
 """
 import asyncio
 import os
+import re
 from functools import partial
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -32,6 +33,29 @@ from app.schemas.chat import RAGContext
 # workspace -> LightRAG instance
 _ENGINES: Dict[str, "object"] = {}
 _LOCKS: Dict[str, asyncio.Lock] = {}
+
+# 唯一后缀的分隔符。LightRAG 把 file_path 同时当【去重键】和【展示名】，
+# 于是两个同名但内容不同的文件会互相冲突：第二个被当成重复提交而跳过，
+# 内容根本不进图谱；删除其中一个还会误伤另一个共用的图谱条目。
+# 我们的做法是把两者拆开 —— 给 file_path 加一个唯一后缀保证每次上传都是
+# 独立条目（类似解决哈希冲突），展示时再把后缀去掉。
+_UID_SEP = "__"
+_UID_RE = re.compile(rf"{_UID_SEP}[0-9a-f]{{8}}(?=\.[^.]+$|$)")
+
+
+def graph_file_path(document) -> str:
+    """LightRAG 的 file_path —— 带唯一后缀，保证同名文件互不干扰。"""
+    source = getattr(document, "source", None) or getattr(document, "title", "document")
+    base = os.path.basename(source)
+    uid = str(getattr(document, "id", "") or "")[:8] or "noid"
+    stem, dot, ext = base.rpartition(".")
+    return f"{stem}{_UID_SEP}{uid}.{ext}" if dot else f"{base}{_UID_SEP}{uid}"
+
+
+def display_name(file_path: str) -> str:
+    """把图谱写路径还原成给用户看的文件名（去掉唯一后缀）。"""
+    base = os.path.basename(file_path) or file_path or "knowledge-graph"
+    return _UID_RE.sub("", base)
 
 
 def _lock_for(key: str) -> asyncio.Lock:
@@ -156,7 +180,7 @@ class LightRAGRetriever:
         rag = await get_engine(document.organization_id)
 
         tracked_id = str(getattr(document, "id", "")) or None
-        file_path = getattr(document, "source", None) or getattr(document, "title", "document")
+        file_path = graph_file_path(document)
 
         await rag.ainsert(
             input=document.content,
@@ -229,7 +253,7 @@ class LightRAGRetriever:
             contexts.append(
                 RAGContext(
                     chunk_id=str(chunk.get("chunk_id") or f"lr-{rank}"),
-                    document_title=os.path.basename(file_path) or file_path or "knowledge-graph",
+                    document_title=display_name(file_path),
                     content=content,
                     # aquery_data returns graph-ranked results without a
                     # cosine score, so we expose a rank-based proxy rather

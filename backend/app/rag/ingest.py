@@ -129,32 +129,6 @@ async def mirror_to_graph(snapshot: DocumentSnapshot) -> None:
         _end(key)
 
 
-async def _source_still_active(source: Optional[str], exclude_id: str) -> bool:
-    """True when another active document covers the same source file."""
-    if not source:
-        return False
-    try:
-        from sqlalchemy import func, select
-
-        from app.db.session import AsyncSessionLocal
-        from app.models.chat import Document
-
-        async with AsyncSessionLocal() as db:
-            row = await db.execute(
-                select(func.count())
-                .select_from(Document)
-                .where(
-                    Document.source == source,
-                    Document.is_active.is_(True),
-                    Document.id != UUID(exclude_id),
-                )
-            )
-            return (row.scalar() or 0) > 0
-    except Exception as e:  # noqa: BLE001 - fall through to attempting the delete
-        logger.warning(f"Could not check for other active documents on '{source}': {e}")
-        return False
-
-
 async def _graph_doc_id_for_path(rag, source: Optional[str]) -> Optional[str]:
     """Find the id LightRAG keyed a source file under.
 
@@ -199,24 +173,9 @@ async def remove_from_graph(snapshot: DocumentSnapshot) -> None:
         logger.info(f"Skipping graph deletion for '{snapshot.title}': restored while queued")
         return
 
-    # Two separate reasons a delete can look like it did nothing:
-    #
-    # 1. The same file was imported more than once, so several Postgres rows
-    #    share one graph entry (LightRAG de-duplicates on file_path and keys it
-    #    on whichever row was ingested first). Deleting a *different* row finds
-    #    no document with that id -> not_found -> the graph keeps the content.
-    #    Fix: resolve the graph's own id for this file_path and delete that.
-    #
-    # 2. A duplicate row is still active. The content is genuinely still in use,
-    #    so the graph entry must stay — deleting it would silently drop knowledge
-    #    that another live document depends on.
-    if await _source_still_active(snapshot.source, exclude_id=snapshot.id):
-        logger.info(
-            f"Skipping graph deletion for '{snapshot.title}': another active document "
-            f"shares source '{snapshot.source}'"
-        )
-        return
-
+    # 每次上传在图谱里都是独立条目（file_path 带唯一后缀，见
+    # lightrag_retriever.graph_file_path），所以直接按 id 删即可，不会误伤
+    # 同名文件。not_found 只可能来自本次改造之前入库的旧数据，用文件名兜底。
     key = _begin("delete", snapshot.id, snapshot.title)
     try:
         from app.rag.lightrag_retriever import get_engine
