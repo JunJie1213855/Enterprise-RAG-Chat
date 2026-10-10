@@ -18,13 +18,12 @@ export default {
           900: '#2e3181',
           950: '#1c1d4e',
         },
-        surface: {
-          DEFAULT: '#0f1117',
-          50:  '#1a1d27',
-          100: '#222533',
-          200: '#2a2e3f',
-          300: '#363a4e',
-        },
+        // NOTE: `surface` deliberately lives in index.css's @theme block, not
+        // here. Tailwind inlines literal values for colours declared in the JS
+        // config (`background-color:#222533`), which would make `bg-surface-*`
+        // ignore the theme swap. Colours declared via @theme are emitted as
+        // `var(--color-…)` references and re-resolve per theme.
+        // `brand` stays here because it is identical in both themes.
       },
       fontFamily: {
         sans: ['Plus Jakarta Sans', 'system-ui', 'sans-serif'],

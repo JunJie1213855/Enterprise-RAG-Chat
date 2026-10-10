@@ -14,6 +14,11 @@ def get_retriever(db=None) -> Retriever:
     """Return the retriever selected by ``settings.RAG_BACKEND``."""
     backend = (settings.RAG_BACKEND or "legacy").strip().lower()
 
+    if backend == "hybrid":
+        # Both pipelines: vector + graph, fused by Reciprocal Rank Fusion.
+        from app.rag.hybrid_retriever import HybridRetriever
+        return HybridRetriever(db)
+
     if backend == "lightrag":
         from app.rag.lightrag_retriever import LightRAGRetriever
         return LightRAGRetriever(db)

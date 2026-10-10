@@ -10,7 +10,7 @@ from app.core.config import settings
 
 router = APIRouter()
 
-
+# 心跳查看
 @router.get("/health")
 async def health_check(db: AsyncSession = Depends(get_db)):
     """Health check with DB connectivity test."""

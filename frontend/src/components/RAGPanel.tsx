@@ -14,7 +14,7 @@ export default function RAGPanel({ contexts, onClose }: Props) {
     <aside className="w-80 flex-shrink-0 glass border-l border-white/5 flex flex-col animate-slide-up overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
         <div>
-          <h3 className="text-sm font-semibold text-white">Retrieved Sources</h3>
+          <h3 className="text-sm font-semibold text-strong">Retrieved Sources</h3>
           <p className="text-xs text-gray-500">{contexts.length} relevant chunks</p>
         </div>
         <button onClick={onClose} className="btn-ghost p-1.5">

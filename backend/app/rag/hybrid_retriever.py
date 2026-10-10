@@ -59,8 +59,16 @@ def fuse_rankings(
     hit_paths: dict[str, int] = {}
 
     for results in ranked_lists:
+        # A store can return the same content more than once (duplicate
+        # documents, or the same chunk reached via two entity paths). Counting
+        # it once per occurrence would let a duplicated document outrank one
+        # that is merely relevant, so only the best rank in each list counts.
+        seen_in_list: set[str] = set()
         for rank, ctx in enumerate(results, start=1):
             key = _dedup_key(ctx)
+            if key in seen_in_list:
+                continue
+            seen_in_list.add(key)
             scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank)
             hit_paths[key] = hit_paths.get(key, 0) + 1
             # Prefer whichever path produced the richer text for this chunk.

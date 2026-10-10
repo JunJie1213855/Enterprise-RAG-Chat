@@ -8,6 +8,7 @@ import RegisterPage from '@/pages/RegisterPage'
 import ChatPage from '@/pages/ChatPage'
 import AdminPage from '@/pages/AdminPage'
 import GraphPage from '@/pages/GraphPage'
+import KnowledgePage from '@/pages/KnowledgePage'
 import ProtectedRoute from '@/components/ProtectedRoute'
 
 export default function App() {
@@ -34,6 +35,9 @@ export default function App() {
       } />
       <Route path="/chat/:sessionId" element={
         <ProtectedRoute><ChatPage /></ProtectedRoute>
+      } />
+      <Route path="/knowledge" element={
+        <ProtectedRoute><KnowledgePage /></ProtectedRoute>
       } />
       <Route path="/graph" element={
         <ProtectedRoute><GraphPage /></ProtectedRoute>

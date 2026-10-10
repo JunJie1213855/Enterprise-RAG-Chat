@@ -91,6 +91,10 @@ class DocumentResponse(BaseModel):
     doc_type: str
     is_active: bool
     created_at: datetime
+    # LightRAG ingest pipeline stage for this document:
+    # pending | parsing | analyzing | processing | processed | failed.
+    # None when the document never reached the graph (vector-only ingest).
+    processing_status: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

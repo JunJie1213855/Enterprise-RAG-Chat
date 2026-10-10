@@ -21,6 +21,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from loguru import logger
 import json
+import os
 
 import asyncio
 
@@ -97,6 +98,69 @@ async def _stream_with_heartbeat(source, interval: float = SSE_HEARTBEAT_SECONDS
     finally:
         if not task.done():
             task.cancel()
+
+
+async def _graph_processing_statuses(organization_id, docs: list) -> dict:
+    """Map document id -> LightRAG pipeline stage.
+
+    Matches on the document id first. That misses duplicates: LightRAG keys
+    ingestion on ``file_path``, so when the same file is imported twice the
+    second import is de-duplicated and never gets a status row of its own. The
+    fallback is therefore the source basename, which is how LightRAG records
+    ``file_path``.
+
+    Best-effort — if the graph is unavailable the list endpoint still works, it
+    just reports no statuses.
+    """
+    if not docs:
+        return {}
+    try:
+        from lightrag.base import DocStatus
+
+        from app.rag.lightrag_retriever import get_engine
+
+        rag = await get_engine(organization_id)
+        # One sweep of the status store, keyed two ways.
+        by_id = await rag.doc_status.get_docs_by_statuses(list(DocStatus))
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Could not read graph processing statuses: {e}")
+        return {}
+
+    # LightRAG records a re-submission of an already-indexed file_path as a
+    # `dup-<hash>` row with status `failed` — "rejected as duplicate", not a
+    # real failure. Keying the fallback on those would label perfectly healthy
+    # documents as failed, so a real row always wins over a duplicate marker.
+    candidates: dict = {}
+    for doc_id, row in (by_id or {}).items():
+        data = row if isinstance(row, dict) else getattr(row, "__dict__", {})
+        path = data.get("file_path")
+        if path:
+            candidates.setdefault(path, []).append(
+                (str(doc_id).startswith("dup-"), data.get("status"))
+            )
+
+    by_path = {}
+    for path, entries in candidates.items():
+        entries.sort(key=lambda e: e[0])  # real rows (False) before dup markers
+        by_path[path] = entries[0][1]
+
+    out = {}
+    for doc in docs:
+        key = str(doc.id)
+        status = None
+
+        row = (by_id or {}).get(key)
+        if row is not None:
+            data = row if isinstance(row, dict) else getattr(row, "__dict__", {})
+            status = data.get("status")
+
+        if status is None and doc.source:
+            # LightRAG stores a basename, our source may be a full path.
+            status = by_path.get(os.path.basename(doc.source))
+
+        if status is not None:
+            out[key] = getattr(status, "value", status)
+    return out
 
 
 async def _persist_assistant_message(session_id, content: str, rag_contexts) -> None:
@@ -399,7 +463,7 @@ async def delete_session(
 
 
 # ------------------------------------------------------------------
-# Documents / Knowledge Base
+# Documents / Knowledge Base 
 # ------------------------------------------------------------------
 
 @router.post("/documents", response_model=DocumentResponse, status_code=201)
@@ -431,7 +495,7 @@ async def upload_document(
     logger.info(f"Document '{doc.title}' uploaded and indexed with {chunk_count} chunks")
     return doc
 
-
+# 文档上传 API
 @router.post("/documents/upload", response_model=DocumentResponse, status_code=201)
 async def upload_document_file(
     background_tasks: BackgroundTasks,
@@ -451,7 +515,7 @@ async def upload_document_file(
         raise HTTPException(status_code=400, detail="User has no organization")
 
     filename = file.filename or ""
-    if not is_supported(filename):
+    if not is_supported(filename): # 是否支持该文档格式的解析
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
@@ -461,7 +525,7 @@ async def upload_document_file(
         )
 
     max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
-    data = await file.read()
+    data = await file.read() # 读取数据
     if len(data) > max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -469,10 +533,10 @@ async def upload_document_file(
         )
 
     try:
-        content = extract_text_from_bytes(filename, data)
+        content = extract_text_from_bytes(filename, data) # 提取内容
     except DocumentParseError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
+    # 文档对象生成
     doc = Document(
         organization_id=current_user.organization_id,
         title=title or file.filename.rsplit(".", 1)[0],
@@ -480,10 +544,11 @@ async def upload_document_file(
         source=filename,
         doc_type=(file.filename.rsplit(".", 1)[-1].lower() if "." in filename else "text"),
     )
+    # 数据库更新
     db.add(doc)
     await db.flush()
     await db.refresh(doc)
-
+    # 文档切块
     chunk_count = await index_document(doc, db, background=background_tasks)
 
     logger.info(
@@ -492,37 +557,113 @@ async def upload_document_file(
     )
     return doc
 
-
+# 文档查看
 @router.get("/documents", response_model=list[DocumentResponse])
 async def list_documents(
+    include_inactive: bool = False,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List organization's knowledge base documents."""
+    """List organization's knowledge base documents.
+
+    ``include_inactive=true`` also returns soft-deleted documents. The UI needs
+    them: a soft-deleted document silently drops out of retrieval, so without
+    showing it the user sees an answer quietly stop working and has no way to
+    tell why or to undo it.
+    """
     from sqlalchemy import select
     from app.models.chat import Document
 
     if not current_user.organization_id:
         return []
 
-    result = await db.execute(
-        select(Document).where(
-            Document.organization_id == current_user.organization_id,
-            Document.is_active == True,
-        )
+    stmt = select(Document).where(
+        Document.organization_id == current_user.organization_id,
     )
-    return list(result.scalars().all())
+    if not include_inactive:
+        stmt = stmt.where(Document.is_active.is_(True))
+
+    result = await db.execute(stmt.order_by(Document.is_active.desc(), Document.created_at.desc()))
+    docs = list(result.scalars().all())
+    if not docs:
+        return []
+
+    # Annotate with the graph pipeline stage. One batched lookup rather than a
+    # call per document; documents that never reached the graph stay None.
+    statuses = await _graph_processing_statuses(current_user.organization_id, docs)
+
+    return [
+        DocumentResponse(
+            id=doc.id,
+            title=doc.title,
+            source=doc.source,
+            doc_type=doc.doc_type,
+            is_active=doc.is_active,
+            created_at=doc.created_at,
+            processing_status=statuses.get(str(doc.id)),
+        )
+        for doc in docs
+    ]
 
 
-@router.delete("/documents/{doc_id}")
-async def delete_document(
+@router.post("/documents/{doc_id}/restore", response_model=DocumentResponse)
+async def restore_document(
     doc_id: UUID,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Soft-delete a document from the knowledge base."""
+    """Undo a soft delete.
+
+    The vector store only needs the flag flipped back, but the knowledge graph
+    may already have dropped the document (its cleanup runs in the background
+    after a delete), so we re-queue graph indexing to make the document
+    reachable from both paths again.
+    """
     from sqlalchemy import select
     from app.models.chat import Document
+    from app.rag.ingest import DocumentSnapshot, mirror_to_graph
+
+    result = await db.execute(
+        select(Document).where(
+            Document.id == doc_id,
+            Document.organization_id == current_user.organization_id,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    doc.is_active = True
+    await db.commit()
+    await db.refresh(doc)
+
+    # Re-adding is idempotent — LightRAG skips a document it already has — so
+    # this is safe even when the graph never lost it.
+    snapshot = DocumentSnapshot.of(doc)
+    background_tasks.add_task(mirror_to_graph, snapshot)
+
+    logger.info(f"Restored document '{doc.title}' ({doc_id})")
+    return doc
+
+# 文档 id 查看
+@router.delete("/documents/{doc_id}")
+async def delete_document(
+    doc_id: UUID,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a document from the knowledge base.
+
+    Two stores to clean, with different semantics: the vector store is
+    soft-deleted (row stays, ``is_active`` filters it out of retrieval), while
+    the knowledge graph must be told explicitly — LightRAG has no soft delete,
+    so an untouched graph keeps answering from the deleted document.
+    """
+    from sqlalchemy import select
+    from app.models.chat import Document
+    from app.rag.ingest import DocumentSnapshot, remove_from_graph
 
     result = await db.execute(
         select(Document).where(
@@ -535,4 +676,13 @@ async def delete_document(
         raise HTTPException(status_code=404, detail="Document not found")
 
     doc.is_active = False
-    return {"message": "Document deleted"}
+
+    # Commit before scheduling: the background task gets its own DB session and
+    # must not race the soft delete.
+    await db.commit()
+
+    # Graph removal rebuilds affected entities when needed, which costs LLM
+    # calls — keep it off the request path.
+    background_tasks.add_task(remove_from_graph, DocumentSnapshot.of(doc))
+
+    return {"message": "Document deleted", "graph_cleanup": "scheduled"}

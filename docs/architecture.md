@@ -82,7 +82,8 @@ backend/app/
 ├── services/                   # 业务逻辑：chat_service / user_service
 └── rag/                        # ★ 检索与生成层，见 §5
     ├── base.py                 # Retriever 协议
-    ├── factory.py              # 按 RAG_BACKEND 选实现
+    ├── factory.py              # 按 RAG_BACKEND 选实现（hybrid/legacy/lightrag）
+    ├── hybrid_retriever.py     # ★ hybrid：两条链路并发 + RRF 融合（默认）
     ├── retriever.py            # 实现 A：pgvector 向量检索
     ├── lightrag_retriever.py   # 实现 B：LightRAG 图谱检索
     ├── ingest.py               # ★ 统一入库入口（双写）
@@ -151,23 +152,38 @@ backend  chat_stream()
 
 ## 5. 检索层（核心）
 
-### 5.1 抽象与双链路
+### 5.1 抽象与三种模式
 
 ```
                     ┌───────────────┐
                     │  Retriever 协议 │  retrieve(query, org_id, k) -> List[RAGContext]
                     └───────┬───────┘
                             │  factory.get_retriever()
-            ┌───────────────┴───────────────┐
-            ▼                               ▼
-   RAGRetriever (legacy)          LightRAGRetriever
-   ─ pgvector 余弦检索             ─ 知识图谱检索
-   ─ CJK 感知分块                  ─ LightRAG token 级分块
-   ─ 内存中分块+向量化              ─ LLM 抽取实体/关系
-                                   ─ aquery_data(mode=hybrid)
+        ┌───────────────────┼───────────────────┐
+        ▼                   ▼                   ▼
+  RAGRetriever        LightRAGRetriever    HybridRetriever  ← 默认
+  ─ pgvector 余弦      ─ 知识图谱检索        ─ 两条路并发查询
+  ─ CJK 感知分块       ─ token 级分块        ─ RRF 按排名融合
+  ─ 分块+向量化        ─ LLM 抽取实体/关系   ─ 任一失败自动降级
 ```
 
-由 `RAG_BACKEND=legacy|lightrag` 切换。**两条链路返回同一个 `RAGContext`**，所以上层（提示词拼装、SSE、前端）完全无感知 —— 这也是能做 A/B 对比的前提。
+由 `RAG_BACKEND=hybrid|legacy|lightrag` 切换（**默认 hybrid**）。三种模式返回同一个 `RAGContext`，所以上层（提示词拼装、SSE、前端）完全无感知 —— 这也是能做 A/B 对比的前提。
+
+**⚠️ 切换不会迁移数据。** 两个存储相互独立：某个模式能不能答，取决于文档有没有被索引进对应的存储。用 `scripts/reindex_lightrag.py` 把 Postgres 里已有的文档回灌进图谱。
+
+#### 5.1.1 为什么是 RRF 而不是加权平均
+
+两条链路的**分数不可比**：向量链路返回余弦相似度（绝对量纲），图谱链路返回的是**排名代理值**（LightRAG 的 `aquery_data` 根本不返回相似度）。把它们加权平均没有意义，而按 embedding 模型调权重会随模型更换而失效。
+
+所以按**排名**融合 —— Reciprocal Rank Fusion：
+
+```
+score(doc) = Σ_路径 1 / (RRF_K + 该路径中的排名)          RRF_K = 60
+```
+
+RRF 不需要分数归一化，且对单条路径排名不佳很鲁棒：两条路径都排前的文档胜出，只有一条路径找到的仍能浮现（只是位置靠后）。分数范围是 `[1/61, 2/61] ≈ [0.0164, 0.0328]`，**只有相对意义**。
+
+> 实现细节：同一条内容在一份榜单里重复出现（库里存在重复文档时很常见）**只计一次分**，否则被重复存储的文档会排到仅仅只是相关的文档前面。
 
 ### 5.2 实现 A：pgvector 向量检索
 
@@ -197,8 +213,8 @@ LightRAG 以 **vendored 方式**放在 `backend/thirdparty/LightRAG`，Docker �
 
 ```
 index_document(document, db, background)
-  ├─ 1. 写主链路（按 RAG_BACKEND）
-  └─ 2. LIGHTRAG_INDEX_ALWAYS 且主链路非 lightrag → 镜像写图谱
+  ├─ 1. 写向量存储（backend 含 legacy 时）—— 快，同步
+  └─ 2. 写图谱（backend 含 lightrag 时）—— 慢，走 BackgroundTasks
 ```
 
 - **API 走 `BackgroundTasks`**：图谱抽取一份文档要多次 LLM 调用（数秒到数分钟），同步会阻塞上传接口
@@ -274,7 +290,7 @@ organizations ──┬── users ──── chat_sessions ──── mess
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `RAG_BACKEND` | `legacy` | `legacy`（pgvector）/ `lightrag`（图谱） |
+| `RAG_BACKEND` | `hybrid` | `hybrid`（向量+图谱，RRF 融合）/ `legacy` / `lightrag` |
 | `LIGHTRAG_INDEX_ALWAYS` | `true` | 非 lightrag 链路时是否镜像写图谱 |
 | `LIGHTRAG_QUERY_MODE` | `hybrid` | `local` / `global` / `hybrid` / `mix` / `naive` |
 | `SSE_HEARTBEAT_SECONDS` | `15` | SSE 心跳间隔；代理超时更短时调小 |
@@ -292,7 +308,7 @@ organizations ──┬── users ──── chat_sessions ──── mess
 LightRAG 的 `google-genai` 依赖强制 `httpx>=0.28.1`，而 `openai<2` 的 `AsyncHttpxClientWrapper` 在 httpx 0.28 下会崩（`AttributeError: _state`）。因此 `openai` 必须 ≥3.x。Dockerfile 中 **LightRAG 在 requirements 之前安装**，让本项目的 pin 拥有最终决定权。
 
 **图谱是派生数据**
-图谱写入失败不影响主链路（文档仍可检索），代价是图与知识库可能短暂不一致。Graph 页面在 `RAG_BACKEND=legacy` 且 `LIGHTRAG_INDEX_ALWAYS=false` 时不会增长。
+图谱写入失败不影响向量链路（文档仍可检索），代价是图与知识库可能短暂不一致。图谱是**异步构建**的：上传返回时向量检索已可用，图谱可能还在抽取中。
 
 **图谱实体名为英文**
 LightRAG 的实体归一化会把中文实体转成英文（`张伟` → `Zhang Wei`）。若要显示中文实体名，需调整抽取提示词或加名称映射层。

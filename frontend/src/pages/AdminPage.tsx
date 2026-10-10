@@ -47,7 +47,7 @@ export default function AdminPage() {
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+          <h1 className="text-2xl font-bold text-strong flex items-center gap-2">
             <Shield className="w-6 h-6 text-brand-400" />
             Admin Panel
           </h1>
@@ -69,7 +69,7 @@ export default function AdminPage() {
                 <Icon className={`w-5 h-5 ${color}`} />
                 <span className="text-sm text-gray-400">{label}</span>
               </div>
-              <p className="text-3xl font-bold text-white">{value}</p>
+              <p className="text-3xl font-bold text-strong">{value}</p>
             </div>
           ))}
         </div>
@@ -78,7 +78,7 @@ export default function AdminPage() {
       {/* Users Table */}
       <div className="glass-card overflow-hidden">
         <div className="px-6 py-4 border-b border-white/5">
-          <h2 className="font-semibold text-white flex items-center gap-2">
+          <h2 className="font-semibold text-strong flex items-center gap-2">
             <Users className="w-4 h-4 text-brand-400" />
             Organization Users ({users.length})
           </h2>

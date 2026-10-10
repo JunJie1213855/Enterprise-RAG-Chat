@@ -73,6 +73,8 @@ export interface Document {
   doc_type: string
   is_active: boolean
   created_at: string
+  /** LightRAG ingest pipeline stage; null when the doc never reached the graph. */
+  processing_status?: 'pending' | 'parsing' | 'analyzing' | 'processing' | 'processed' | 'failed' | null
 }
 
 export interface AdminStats {

@@ -1,11 +1,110 @@
 @import "tailwindcss";
 @config "../tailwind.config.js";
 
+/* =====================================================================
+   主题系统
+   ---------------------------------------------------------------------
+   Tailwind v4 把颜色工具类编译成 var(--color-xxx) 引用，所以换主题只需在
+   主题作用域里重新定义这些变量 —— 不必改动任何 className。
+
+   两套主题：
+     护眼系 (.theme-eye，默认)  —— 现有暗色
+     明亮系 (.theme-light)      —— 白底 / 灰线 / 黑字
+
+   灰阶在明亮系下是「反转」的：暗色主题里 text-gray-100 是近白色（深底上的
+   正文），明亮系里必须变成近黑色才读得出来。灰阶只用于文字（全项目没有
+   bg-gray-*），所以反转是安全的。
+   ===================================================================== */
+
+@theme {
+  /* 正文强调色（标题、重要文字）：暗色下近白，明亮下近黑 */
+  --color-strong: #ffffff;
+
+  /* 面板底色。必须声明在 @theme（而不是 tailwind.config.js）——
+     只有这样 Tailwind 才会发 var(--color-surface-*) 引用，
+     否则会把值内联成字面量，换主题时不会跟着变。 */
+  --color-surface: #0f1117;
+  --color-surface-50: #1a1d27;
+  --color-surface-100: #222533;
+  --color-surface-200: #2a2e3f;
+  --color-surface-300: #363a4e;
+}
+
+/* ---- 护眼系（默认）---- */
+:root,
+.theme-eye {
+  --color-strong: #f8fafc;
+
+  /* 选中文本：深紫底 + 白字 */
+  --selection-bg: #3f42cb;
+  --selection-fg: #ffffff;
+
+  --color-surface: #0f1117;
+  --color-surface-50: #1a1d27;
+  --color-surface-100: #222533;
+  --color-surface-200: #2a2e3f;
+  --color-surface-300: #363a4e;
+
+  --color-gray-100: oklch(96.7% 0.003 264.542);
+  --color-gray-200: oklch(92.8% 0.006 264.531);
+  --color-gray-300: oklch(87.2% 0.01 258.338);
+  --color-gray-400: oklch(70.7% 0.022 261.325);
+  --color-gray-500: oklch(55.1% 0.027 264.364);
+  --color-gray-600: oklch(44.6% 0.03 256.802);
+  --color-gray-700: oklch(37.3% 0.034 259.733);
+}
+
+/* ---- 明亮系：白底、灰线、黑字 ---- */
+.theme-light {
+  --color-strong: #0f172a;
+
+  /* 选中文本：浅紫底 + 黑字（深紫底配黑字读不出来） */
+  --selection-bg: #c7d7fe;
+  --selection-fg: #000000;
+
+  --color-surface: #ffffff;
+  --color-surface-50: #f8fafc;
+  --color-surface-100: #f1f5f9;
+  --color-surface-200: #e2e8f0;
+  --color-surface-300: #cbd5e1;
+
+  /* 反转灰阶：越多用在文字上，浅底要深字 */
+  --color-gray-100: #0f172a;
+  --color-gray-200: #1e293b;
+  --color-gray-300: #334155;
+  --color-gray-400: #475569;
+  --color-gray-500: #64748b;
+  --color-gray-600: #7c8899;
+  --color-gray-700: #a3aeba;
+}
+
+/* 半透明白色（边框/悬停底色）在浅色背景上不可见，改用黑色透明。
+   只有这 6 个变体，逐个覆盖比全局换 --color-white 安全 ——
+   后者会把品牌按钮上的白字也一起变成黑的。 */
+.theme-light .border-white\/5  { border-color: rgb(0 0 0 / 0.08); }
+.theme-light .border-white\/8  { border-color: rgb(0 0 0 / 0.10); }
+.theme-light .border-white\/10 { border-color: rgb(0 0 0 / 0.12); }
+.theme-light .border-white\/20 { border-color: rgb(0 0 0 / 0.20); }
+.theme-light .bg-white\/5      { background-color: rgb(0 0 0 / 0.04); }
+.theme-light .hover\:bg-white\/5:hover { background-color: rgb(0 0 0 / 0.05); }
+.theme-light .hover\:bg-white\/2:hover { background-color: rgb(0 0 0 / 0.03); }
+
+/* 明亮系下顶部两团品牌色光晕太淡，改成更明确的浅灰底纹 */
+.theme-light body {
+  background-image:
+    radial-gradient(ellipse at 20% 0%, rgba(97, 112, 241, 0.07) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 100%, rgba(97, 112, 241, 0.05) 0%, transparent 50%);
+}
+
 @layer base {
   * { box-sizing: border-box; }
 
   body {
-    @apply bg-surface text-gray-100 font-sans antialiased;
+    /* 颜色必须写成显式 var()：@apply 会在构建期把主题色内联成字面量，
+       那样换主题时变量变了、这里的背景却不会跟着变。非颜色工具类仍用 @apply。 */
+    background-color: var(--color-surface);
+    color: var(--color-gray-100);
+    @apply font-sans antialiased;
     background-image:
       radial-gradient(ellipse at 20% 0%, rgba(97,112,241,0.12) 0%, transparent 50%),
       radial-gradient(ellipse at 80% 100%, rgba(97,112,241,0.08) 0%, transparent 50%);
@@ -13,19 +112,31 @@
   }
 
   ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { @apply bg-transparent; }
-  ::-webkit-scrollbar-thumb { @apply bg-surface-200 rounded-full; }
-  ::-webkit-scrollbar-thumb:hover { @apply bg-surface-300; }
+  ::-webkit-scrollbar-track { background-color: transparent; }
+  ::-webkit-scrollbar-thumb { background-color: var(--color-surface-200); @apply rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { background-color: var(--color-surface-300); }
 
-  ::selection { @apply bg-brand-700 text-white; }
+  /* 选中文本：背景与前景都要随主题走。
+     护眼系是深紫底 + 白字；明亮系若沿用深紫底，黑字会看不清，
+     所以换成浅紫底（brand-200）配黑字。 */
+  ::selection {
+    background-color: var(--selection-bg);
+    color: var(--selection-fg);
+  }
+  ::-moz-selection {
+    background-color: var(--selection-bg);
+    color: var(--selection-fg);
+  }
 }
 
 @layer components {
   .glass {
-    @apply bg-surface-50/60 backdrop-blur-xl border border-white/5;
+    background-color: color-mix(in oklab, var(--color-surface-50) 60%, transparent);
+    @apply backdrop-blur-xl border border-white/5;
   }
   .glass-card {
-    @apply bg-surface-50/60 backdrop-blur-xl border border-white/5
+    background-color: color-mix(in oklab, var(--color-surface-50) 60%, transparent);
+    @apply backdrop-blur-xl border border-white/5
            rounded-2xl shadow-xl shadow-black/20;
   }
   .btn-primary {
@@ -38,7 +149,9 @@
            transition-all duration-150 active:scale-95;
   }
   .input-field {
-    @apply bg-surface-100 border border-white/8 rounded-xl px-4 py-2.5 text-gray-100
+    background-color: var(--color-surface-100);
+    color: var(--color-gray-100);
+    @apply border border-white/8 rounded-xl px-4 py-2.5
            placeholder-gray-500 focus:outline-none focus:border-brand-500/60 focus:ring-1
            focus:ring-brand-500/30 transition-all duration-150 w-full;
   }
@@ -48,7 +161,8 @@
            truncate;
   }
   .sidebar-item.active {
-    @apply bg-brand-600/20 text-brand-300 border border-brand-500/20;
+    @apply text-brand-300 border border-brand-500/20;
+    background-color: color-mix(in oklab, var(--color-brand-600) 20%, transparent);
   }
 }
 
@@ -63,10 +177,12 @@
 .prose-chat ul { @apply list-disc; }
 .prose-chat ol { @apply list-decimal; }
 .prose-chat code:not(pre code) {
-  @apply bg-surface-200 text-brand-300 px-1.5 py-0.5 rounded text-sm font-mono;
+  background-color: var(--color-surface-200);
+  @apply text-brand-300 px-1.5 py-0.5 rounded text-sm font-mono;
 }
 .prose-chat pre {
-  @apply bg-surface-200 rounded-xl p-4 overflow-x-auto mb-3 border border-white/5;
+  background-color: var(--color-surface-200);
+  @apply rounded-xl p-4 overflow-x-auto mb-3 border border-white/5;
 }
 .prose-chat pre code { @apply text-sm font-mono; }
 .prose-chat blockquote {
@@ -74,6 +190,9 @@
 }
 .prose-chat a { @apply text-brand-400 underline hover:text-brand-300; }
 .prose-chat table { @apply w-full mb-3 border-collapse; }
-.prose-chat th { @apply bg-surface-200 text-gray-200 font-medium px-3 py-2 text-left border border-white/10; }
+.prose-chat th {
+  background-color: var(--color-surface-200);
+  @apply text-gray-200 font-medium px-3 py-2 text-left border border-white/10;
+}
 .prose-chat td { @apply px-3 py-2 border border-white/5 text-gray-300; }
 .prose-chat hr { @apply border-white/10 my-4; }

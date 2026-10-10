@@ -18,7 +18,7 @@ router = APIRouter()
 MAX_DEPTH_LIMIT = 5
 MAX_NODES_LIMIT = 2000
 
-
+# 知识图谱可视化
 @router.get("/graph")
 async def get_graph(
     label: str = Query("*", description="Entity label to centre the subgraph on; '*' for everything"),
@@ -54,3 +54,22 @@ async def get_graph(
         f"{len(payload.get('edges') or [])} edges"
     )
     return payload
+
+
+@router.get("/graph/status")
+async def graph_status(current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
+    """Progress of in-flight graph work.
+
+    Indexing and deleting both cost LLM calls and run in the background, so the
+    graph trails the document list by seconds to minutes. The UI polls this so
+    it can say "still catching up" instead of silently showing stale entities.
+    """
+    from app.rag.ingest import pending_graph_tasks
+
+    tasks = pending_graph_tasks()
+    return {
+        "pending_count": len(tasks),
+        "indexing": sum(1 for t in tasks if t["kind"] == "index"),
+        "deleting": sum(1 for t in tasks if t["kind"] == "delete"),
+        "tasks": tasks,
+    }

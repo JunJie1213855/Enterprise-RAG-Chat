@@ -128,7 +128,8 @@
 3. app/rag/llm_service.py       (107 行，怎么调 LLM，注意 stub 降级)
 4. app/rag/prompt.py            (50 行，提示词怎么拼)
 5. app/rag/retriever.py         (263 行) ★ 精读
-6. app/rag/factory.py           (选实现，25 行)
+6. app/rag/factory.py           (选实现，三种模式)
+7. app/rag/hybrid_retriever.py  (RRF 融合，默认模式) ★
 ```
 
 ### `retriever.py` 两个高价值段落
@@ -215,8 +216,8 @@ AND 1 - (embedding <=> ...) >= :threshold
 **② 分块实验** —— 理解中文分块
 把 `retriever.py` 的 `CJK_RATIO_THRESHOLD` 改成 `1.0`（强制走按词路径），重新导入一份中文文档，看日志里 chunk 数从 9 变 1。
 
-**③ 链路切换实验** —— 理解双链路
-`.env` 里 `RAG_BACKEND=legacy` 改成 `lightrag`，重启，问同一个问题。对比两条链路的召回。**这就是简历里 A/B 对比数据要跑的东西。**
+**③ 链路切换实验** —— 理解三种模式
+把 `.env` 的 `RAG_BACKEND` 在 `hybrid` / `legacy` / `lightrag` 之间切换，问同一个问题，对比召回。**注意切换不迁移数据**：切到 `lightrag` 前要先跑 `scripts/reindex_lightrag.py` 回灌，否则图谱里没有文档。
 
 **④ 降级实验** —— 理解可用性优先
 临时把 `LLM_API_KEY` 置空，重启，发一条消息。观察 demo 模式返回的提示文案。
@@ -261,7 +262,10 @@ docker compose logs backend --tail 100 | grep -A5 "SELECT"
 ## 10. 常见困惑（为什么是这样设计的）
 
 **Q: 为什么要搞 `base.py` 协议 + `factory.py`，直接 import 不行吗？**
-A: 因为要**双链路可切换**。两条链路返回同一个 `RAGContext`，上层（提示词、SSE、前端）完全无感知。这也是能做 A/B 对比的前提。
+A: 因为要**多链路可切换**。三种模式返回同一个 `RAGContext`，上层（提示词、SSE、前端）完全无感知。这也是能做 A/B 对比的前提。
+
+**Q: 默认的 `hybrid` 为什么按排名融合，而不是把两个分数加权平均？**
+A: 因为两条链路的分数**不可比** —— 向量链路是余弦相似度，图谱链路是排名代理值（LightRAG 不返回相似度）。加权平均没有意义。RRF 只用排名，天然规避量纲问题。
 
 **Q: 为什么 `parsers.py` 里 PDF 要用两个库？**
 A: PyMuPDF 能通过字形名反查恢复**缺失 `/ToUnicode` CMap** 的中文 PDF（LaTeX 生成的很常见），pypdf 对这类文件只会输出乱码。但 pypdf 是更保守的兜底。

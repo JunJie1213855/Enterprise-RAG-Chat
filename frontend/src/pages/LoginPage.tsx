@@ -39,13 +39,13 @@ export default function LoginPage() {
             <Bot className="w-7 h-7 text-white" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-white">EnterprisAI</h1>
+            <h1 className="text-xl font-bold text-strong">EnterprisAI</h1>
             <p className="text-xs text-gray-500">Powered by RAG</p>
           </div>
         </div>
 
         <div className="glass-card p-8">
-          <h2 className="text-2xl font-bold text-white mb-1">Welcome back</h2>
+          <h2 className="text-2xl font-bold text-strong mb-1">Welcome back</h2>
           <p className="text-gray-400 text-sm mb-6">Sign in to your workspace</p>
 
           <form onSubmit={handleSubmit} className="space-y-4">

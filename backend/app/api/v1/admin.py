@@ -17,7 +17,7 @@ from app.services.user_service import UserService
 
 router = APIRouter()
 
-
+# 当前状态
 @router.get("/stats")
 async def get_stats(
     current_user: User = Depends(get_current_admin),

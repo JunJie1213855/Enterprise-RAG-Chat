@@ -180,7 +180,7 @@ export default function ChatPage() {
               <Bot className="w-4 h-4 text-brand-400" />
             </div>
             <div>
-              <h1 className="text-sm font-semibold text-white">Enterprise Assistant</h1>
+              <h1 className="text-sm font-semibold text-strong">Enterprise Assistant</h1>
               <p className="text-xs text-gray-500">RAG-powered · {user?.organization_id ? 'Org knowledge active' : 'Personal'}</p>
             </div>
           </div>
@@ -242,7 +242,7 @@ function EmptyState() {
       <div className="w-16 h-16 bg-brand-600/20 rounded-2xl flex items-center justify-center mb-4 border border-brand-500/20">
         <Bot className="w-8 h-8 text-brand-400" />
       </div>
-      <h2 className="text-xl font-semibold text-white mb-2">How can I help?</h2>
+      <h2 className="text-xl font-semibold text-strong mb-2">How can I help?</h2>
       <p className="text-gray-500 text-sm text-center max-w-xs">
         Ask me anything. I'll search through your organization's knowledge base to give you accurate answers.
       </p>

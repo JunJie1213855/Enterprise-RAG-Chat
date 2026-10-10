@@ -54,9 +54,12 @@ class Settings(BaseSettings):
 
     # RAG 后端
     # Which retrieval implementation serves the chat pipeline:
-    #   legacy   -> pgvector cosine search (RAGRetriever)
-    #   lightrag -> LightRAG knowledge-graph layer (LightRAGRetriever)
-    RAG_BACKEND: str = "legacy"
+    #   hybrid   -> BOTH, fused with Reciprocal Rank Fusion (default)
+    #   legacy   -> pgvector cosine search only
+    #   lightrag -> LightRAG knowledge-graph layer only
+    # Changing this does NOT migrate data — a store only answers if the
+    # documents were indexed into it. See scripts/reindex_lightrag.py.
+    RAG_BACKEND: str = "hybrid"
 
     # LightRAG (knowledge-graph layer only — generation stays with llm_service)
     LIGHTRAG_DATA_DIR: str = "lightrag_data"   # graph/vector/kv files, per workspace

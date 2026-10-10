@@ -112,7 +112,13 @@ export const chatApi = {
   getGraph: (params: { label?: string; max_depth?: number; max_nodes?: number } = {}) =>
     api.get('/chat/graph', { params }),
 
-  getDocuments: () => api.get('/chat/documents'),
+  /** In-flight graph indexing/deletion — the graph trails the document list. */
+  getGraphStatus: () => api.get('/chat/graph/status'),
+
+  // includeInactive surfaces soft-deleted documents so the UI can show them
+  // as disabled and offer a restore.
+  getDocuments: (includeInactive = true) =>
+    api.get('/chat/documents', { params: { include_inactive: includeInactive } }),
 
   uploadDocument: (data: { title: string; content: string; source?: string; doc_type?: string }) =>
     api.post('/chat/documents', data),
@@ -125,6 +131,8 @@ export const chatApi = {
   },
 
   deleteDocument: (id: string) => api.delete(`/chat/documents/${id}`),
+
+  restoreDocument: (id: string) => api.post(`/chat/documents/${id}/restore`),
 }
 
 // ------------------------------------------------------------------ Admin
