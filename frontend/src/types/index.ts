@@ -19,6 +19,8 @@ export interface TokenResponse {
 
 export interface RAGContext {
   chunk_id: string
+  /** Owning document id; null when the chunk can't be traced back to a row. */
+  document_id?: string | null
   document_title: string
   content: string
   similarity_score: number
@@ -75,6 +77,11 @@ export interface Document {
   created_at: string
   /** LightRAG ingest pipeline stage; null when the doc never reached the graph. */
   processing_status?: 'pending' | 'parsing' | 'analyzing' | 'processing' | 'processed' | 'failed' | null
+}
+
+export interface DocumentDetail extends Document {
+  /** Full document text, for rendering with the retrieved passage highlighted. */
+  content: string
 }
 
 export interface AdminStats {

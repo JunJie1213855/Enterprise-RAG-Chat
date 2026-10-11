@@ -11,6 +11,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
     status,
@@ -38,6 +39,8 @@ from app.schemas.chat import (
     SessionResponse,
     DocumentUploadRequest,
     DocumentResponse,
+    DocumentDetailResponse,
+    ChunkContentsResponse,
     UpdateSessionTitleRequest,
     MessageResponse,
 )
@@ -59,6 +62,10 @@ limiter = Limiter(key_func=get_remote_address)
 
 # Idle interval after which the SSE endpoint emits a keep-alive comment frame.
 SSE_HEARTBEAT_SECONDS = settings.SSE_HEARTBEAT_SECONDS
+
+# Cap on how many chunk ids one lookup may request — a hub entity can reference
+# hundreds, and the response carries each chunk's full text.
+MAX_CHUNK_FETCH = 200
 
 
 # 编码
@@ -636,6 +643,71 @@ async def list_documents(
         )
         for doc in docs
     ]
+
+
+@router.get("/documents/{doc_id}", response_model=DocumentDetailResponse)
+async def get_document(
+    doc_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch one document's full text.
+
+    Backs the "view in document" flow: the chat UI opens the source document and
+    highlights the retrieved passage inside it. Scoped to the caller's
+    organization, so a member cannot read another tenant's document.
+    """
+    from sqlalchemy import select
+    from app.models.chat import Document
+
+    result = await db.execute(
+        select(Document).where(
+            Document.id == doc_id,
+            Document.organization_id == current_user.organization_id,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return doc
+
+
+@router.get("/chunks", response_model=ChunkContentsResponse)
+async def get_chunks(
+    ids: str = Query(..., description="Comma-separated chunk ids"),
+    current_user: User = Depends(get_current_user),
+):
+    """Return the raw text of graph chunks, by id.
+
+    Backs the provenance panel: when an entity is selected, the UI lists the
+    chunks it was extracted from and highlights their text inside the source
+    document. Ids are read from the caller's own LightRAG workspace, so a member
+    cannot read another tenant's chunks.
+    """
+    if not current_user.organization_id:
+        raise HTTPException(status_code=400, detail="User has no organization")
+
+    chunk_ids = [c.strip() for c in (ids or "").split(",") if c.strip()][:MAX_CHUNK_FETCH]
+    if not chunk_ids:
+        return ChunkContentsResponse(chunks={})
+
+    from app.rag.lightrag_retriever import get_engine
+
+    try:
+        rag = await get_engine(current_user.organization_id)
+        rows = await rag.text_chunks.get_by_ids(chunk_ids)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Chunk lookup failed for org {current_user.organization_id}: {e}")
+        raise HTTPException(status_code=503, detail="Knowledge graph is unavailable")
+
+    out: dict[str, str] = {}
+    for cid, row in zip(chunk_ids, rows or []):
+        if not isinstance(row, dict):
+            continue
+        content = row.get("content")
+        if content:
+            out[cid] = content
+    return ChunkContentsResponse(chunks=out)
 
 
 @router.post("/documents/{doc_id}/restore", response_model=DocumentResponse)

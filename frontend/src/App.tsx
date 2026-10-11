@@ -14,13 +14,15 @@ import ProtectedRoute from '@/components/ProtectedRoute'
 export default function App() {
   const { isAuthenticated, setUser, logout } = useAuthStore()
 
+  // Mount-only: validate a persisted session once. Re-running on every auth
+  // change would re-fetch on each store update.
   useEffect(() => {
     if (isAuthenticated) {
       authApi.me()
         .then((res) => setUser(res.data))
         .catch(() => logout())
     }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <Routes>

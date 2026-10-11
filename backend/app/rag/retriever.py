@@ -168,6 +168,7 @@ class RAGRetriever:
         sql = text("""
             SELECT
                 dc.id,
+                dc.document_id,
                 dc.content,
                 dc.metadata,
                 d.title,
@@ -203,6 +204,7 @@ class RAGRetriever:
             contexts.append(
                 RAGContext(
                     chunk_id=str(row.id),
+                    document_id=str(row.document_id),
                     document_title=row.title,
                     content=row.content,
                     similarity_score=round(float(row.similarity), 4),
@@ -240,6 +242,7 @@ class RAGRetriever:
         return [
             RAGContext(
                 chunk_id=str(c.id),
+                document_id=str(c.document_id),
                 document_title=t,
                 content=c.content,
                 similarity_score=round(s, 4),

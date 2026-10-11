@@ -104,8 +104,8 @@ class HybridRetriever:
         from app.rag.retriever import RAGRetriever
 
         self.db = db
-        self.vector = RAGRetriever(db)
-        self.graph = LightRAGRetriever(db)
+        self.vector = RAGRetriever(db)     # 向量检索
+        self.graph = LightRAGRetriever(db) # 知识图谱检索
 
     # ------------------------------------------------------------------
     # Indexing — both stores, so either path can serve alone

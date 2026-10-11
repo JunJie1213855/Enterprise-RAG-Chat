@@ -1,13 +1,15 @@
-import { X, FileText, ChevronDown, ChevronRight } from 'lucide-react'
+import { X, FileText, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
 import { useState } from 'react'
 import type { RAGContext } from '@/types'
 
 interface Props {
   contexts: RAGContext[]
   onClose: () => void
+  /** Open the source document with this passage highlighted. */
+  onOpenDocument: (ctx: RAGContext) => void
 }
 
-export default function RAGPanel({ contexts, onClose }: Props) {
+export default function RAGPanel({ contexts, onClose, onOpenDocument }: Props) {
   const [expanded, setExpanded] = useState<string | null>(null)
 
   return (
@@ -23,7 +25,7 @@ export default function RAGPanel({ contexts, onClose }: Props) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
-        {contexts.map((ctx, i) => (
+        {contexts.map((ctx) => (
           <div key={ctx.chunk_id} className="bg-surface-100 rounded-xl border border-white/5 overflow-hidden">
             <button
               onClick={() => setExpanded(expanded === ctx.chunk_id ? null : ctx.chunk_id)}
@@ -52,6 +54,15 @@ export default function RAGPanel({ contexts, onClose }: Props) {
             {expanded === ctx.chunk_id && (
               <div className="px-3 pb-3 border-t border-white/5 pt-2">
                 <p className="text-xs text-gray-400 leading-relaxed line-clamp-6">{ctx.content}</p>
+                <button
+                  onClick={() => onOpenDocument(ctx)}
+                  disabled={!ctx.document_id}
+                  title={ctx.document_id ? '在源文档中查看并高亮该片段' : '该片段无法回连到具体文档'}
+                  className="mt-2 flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-brand-600/20 text-brand-300 border border-brand-500/20 hover:bg-brand-600/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-brand-600/20"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  查看原文
+                </button>
               </div>
             )}
           </div>

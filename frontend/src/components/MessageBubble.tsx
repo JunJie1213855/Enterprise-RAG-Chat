@@ -56,7 +56,7 @@ export default function MessageBubble({ message, streaming }: Props) {
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
-                code({ node, className, children, ...props }: any) {
+                code({ node: _node, className, children, ...props }: any) {
                   const match = /language-(\w+)/.exec(className || '')
                   return match ? (
                     <SyntaxHighlighter

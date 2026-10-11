@@ -1,13 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
-  Plus, Bot, MessageSquare, Trash2, Settings,
-  ChevronRight, LogOut, Users, LayoutDashboard,
+  Plus, Bot, MessageSquare, Trash2, LogOut, LayoutDashboard,
   Database, ToggleLeft, ToggleRight, X, Menu,
-  Upload, FileText, Loader2, RotateCcw,
 } from 'lucide-react'
-import { chatApi, getApiError } from '@/services/api'
+import { chatApi } from '@/services/api'
 import { useAuthStore } from '@/store/authStore'
 import { useChatStore } from '@/store/chatStore'
 import ThemeToggle from '@/components/ThemeToggle'
@@ -21,15 +18,19 @@ export default function Sidebar() {
   const { sessions, setSessions, removeSession, useRag, setUseRag } = useChatStore()
   const [collapsed, setCollapsed] = useState(false)
 
+  // Mount-only: the sidebar loads the session list once. `loadSessions` is
+  // recreated each render, so listing it as a dep would loop.
   useEffect(() => {
     loadSessions()
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadSessions = async () => {
     try {
       const { data } = await chatApi.getSessions()
       setSessions(data.sessions || [])
-    } catch {}
+    } catch {
+      // Best-effort: an empty sidebar is an acceptable failure mode.
+    }
   }
 
   const newChat = () => {
@@ -48,7 +49,11 @@ export default function Sidebar() {
   }
 
   const handleLogout = async () => {
-    try { await chatApi.getSessions() } catch {}
+    try {
+      await chatApi.getSessions()
+    } catch {
+      // Best-effort warm-up; logout must proceed regardless.
+    }
     logout()
     navigate('/login')
   }

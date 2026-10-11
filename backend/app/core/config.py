@@ -5,7 +5,7 @@ from typing import List, Optional
 from pydantic_settings import BaseSettings
 from pydantic import validator
 
-# 相关设置
+# 相关设置，注意下面的值都是默认值，实际导入还要看 .env
 class Settings(BaseSettings):
     # App：名称、版本、环境、是否调试状态、
     APP_NAME: str = "Enterprise Chatbot"

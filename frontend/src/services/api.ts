@@ -132,6 +132,13 @@ export const chatApi = {
 
   deleteDocument: (id: string) => api.delete(`/chat/documents/${id}`),
 
+  /** One document's full text, for the "view in document" highlight view. */
+  getDocument: (id: string) => api.get(`/chat/documents/${id}`),
+
+  /** Raw text of graph chunks by id — backs the provenance panel's highlights. */
+  getChunks: (ids: string[]) =>
+    api.get('/chat/chunks', { params: { ids: ids.join(',') } }),
+
   restoreDocument: (id: string) => api.post(`/chat/documents/${id}/restore`),
 }
 

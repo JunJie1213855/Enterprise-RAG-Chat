@@ -36,6 +36,10 @@ class ChatRequest(BaseModel):
 
 class RAGContext(BaseModel):
     chunk_id: str
+    # Owning document id, when resolvable. Lets the UI open the source document
+    # and highlight the passage. None for chunks that cannot be traced back to
+    # a document row (e.g. graph chunks whose file_path has no uid suffix).
+    document_id: Optional[str] = None
     document_title: str
     content: str
     similarity_score: float
@@ -107,6 +111,17 @@ class DocumentResponse(BaseModel):
     processing_status: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+
+class DocumentDetailResponse(DocumentResponse):
+    # Full text, used to render the document with the retrieved passage
+    # highlighted. Only served for the owner's own organization.
+    content: str
+
+
+class ChunkContentsResponse(BaseModel):
+    # chunk_id -> chunk text. Missing ids are simply absent from the map.
+    chunks: dict[str, str]
 
 
 class UpdateSessionTitleRequest(BaseModel):

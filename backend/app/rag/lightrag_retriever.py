@@ -40,7 +40,17 @@ _LOCKS: Dict[str, asyncio.Lock] = {}
 # 我们的做法是把两者拆开 —— 给 file_path 加一个唯一后缀保证每次上传都是
 # 独立条目（类似解决哈希冲突），展示时再把后缀去掉。
 _UID_SEP = "__"
-_UID_RE = re.compile(rf"{_UID_SEP}[0-9a-f]{{8}}(?=\.[^.]+$|$)")
+_UID_RE = re.compile(rf"{_UID_SEP}([0-9a-f]{{8}})(?=\.[^.]+$|$)")
+
+
+def _uid_from_file_path(file_path: str) -> Optional[str]:
+    """Extract the 8-hex document-id prefix embedded by :func:`graph_file_path`.
+
+    Returns None for legacy entries that predate the uid suffix, so callers can
+    leave ``document_id`` unset rather than guess.
+    """
+    match = _UID_RE.search(file_path or "")
+    return match.group(1) if match else None
 
 
 def graph_file_path(document) -> str:
@@ -64,6 +74,7 @@ def _lock_for(key: str) -> asyncio.Lock:
     return _LOCKS[key]
 
 
+# llm 方法
 def _build_llm_func():
     """Adapt our llm_service to LightRAG's ``llm_model_func`` contract.
 
@@ -102,7 +113,7 @@ def _build_embedding_func():
     # openai_embed is already wrapped in an EmbeddingFunc; reuse the inner
     # function to avoid double wrapping (which would re-validate dimensions).
     base = getattr(openai_embed, "func", openai_embed)
-
+    # 嵌入层
     return EmbeddingFunc(
         embedding_dim=settings.EMBEDDING_DIMENSION,
         max_token_size=8192,
@@ -131,7 +142,7 @@ async def get_engine(organization_id: UUID):
 
         working_dir = Path(settings.LIGHTRAG_DATA_DIR) / key
         working_dir.mkdir(parents=True, exist_ok=True)
-
+        # rag 建立
         rag = LightRAG(
             working_dir=str(working_dir),
             workspace=key,
@@ -173,7 +184,7 @@ class LightRAGRetriever:
         self.db = db
 
     # ------------------------------------------------------------------
-    # Indexing
+    # Indexing：索引建立
     # ------------------------------------------------------------------
     async def index_document(self, document) -> int:
         """Feed a document through LightRAG's chunker + entity extraction."""
@@ -205,7 +216,7 @@ class LightRAGRetriever:
         return count
 
     # ------------------------------------------------------------------
-    # Retrieval
+    # Retrieval：检索
     # ------------------------------------------------------------------
     async def retrieve(
         self,
@@ -245,11 +256,13 @@ class LightRAGRetriever:
         )
 
         contexts: List[RAGContext] = []
+        file_paths: List[str] = []
         for rank, chunk in enumerate(chunks):
             content = (chunk.get("content") or "").strip()
             if not content:
                 continue
             file_path = chunk.get("file_path") or ""
+            file_paths.append(file_path)
             contexts.append(
                 RAGContext(
                     chunk_id=str(chunk.get("chunk_id") or f"lr-{rank}"),
@@ -261,11 +274,67 @@ class LightRAGRetriever:
                     similarity_score=round(max(0.0, 1.0 - rank * 0.01), 4),
                 )
             )
+
+        # Enrich with document ids so the UI can open the source document.
+        # Best-effort: retrieval must not fail if this lookup does.
+        id_by_path = await self._resolve_document_ids(organization_id, file_paths)
+        for ctx, file_path in zip(contexts, file_paths):
+            ctx.document_id = id_by_path.get(file_path)
         return contexts
+
+    async def _resolve_document_ids(
+        self, organization_id: UUID, file_paths: List[str]
+    ) -> Dict[str, str]:
+        """Map graph ``file_path`` -> document id via the embedded uid suffix.
+
+        We keyed ingestion on ``str(document.id)`` and stamped its 8-hex prefix
+        into ``file_path`` (see :func:`graph_file_path`), so the prefix is enough
+        to find the owning row. One batched query for the whole result set.
+        """
+        if self.db is None:
+            # No DB session (e.g. the ingest mirror constructs the retriever
+            # bare) — nothing to resolve against.
+            return {}
+
+        uid_to_paths: Dict[str, List[str]] = {}
+        for fp in file_paths:
+            uid = _uid_from_file_path(fp)
+            if uid:
+                uid_to_paths.setdefault(uid, []).append(fp)
+        if not uid_to_paths:
+            return {}
+
+        from sqlalchemy import String, cast, or_, select
+
+        from app.models.chat import Document
+
+        try:
+            result = await self.db.execute(
+                select(Document.id).where(
+                    Document.organization_id == organization_id,
+                    or_(
+                        *(
+                            cast(Document.id, String).like(f"{uid}%")
+                            for uid in uid_to_paths
+                        )
+                    ),
+                )
+            )
+            rows = result.scalars().all()
+        except Exception as e:  # noqa: BLE001 - enrichment must never raise
+            logger.warning(f"Could not resolve document ids for graph chunks: {e}")
+            return {}
+
+        id_by_path: Dict[str, str] = {}
+        for doc_id in rows:
+            uid = str(doc_id)[:8]
+            for fp in uid_to_paths.get(uid, []):
+                id_by_path[fp] = str(doc_id)
+        return id_by_path
 
 
     # ------------------------------------------------------------------
-    # Prompt building (shared with the legacy retriever)
+    # Prompt building (shared with the legacy retriever)：提示词构建
     # ------------------------------------------------------------------
     def build_augmented_prompt(
         self,

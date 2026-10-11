@@ -8,8 +8,9 @@ import Sidebar from '@/components/Sidebar'
 import MessageBubble from '@/components/MessageBubble'
 import ChatInput from '@/components/ChatInput'
 import RAGPanel from '@/components/RAGPanel'
+import DocumentViewer from '@/components/DocumentViewer'
 import { Bot, Sparkles } from 'lucide-react'
-import type { Message } from '@/types'
+import type { Message, RAGContext } from '@/types'
 
 const STATUS_LABELS: Record<string, string> = {
   retrieving: 'Searching your knowledge base…',
@@ -22,7 +23,7 @@ export default function ChatPage() {
   const { user } = useAuthStore()
   const {
     currentSessionId, setCurrentSession, setSessionId,
-    sessions, addSession, updateSessionTitle,
+    addSession, updateSessionTitle,
     messages, setMessages, addMessage,
     isStreaming, setStreaming, streamBuffer, appendStream, clearStream,
     ragContexts, setRagContexts,
@@ -32,9 +33,12 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [showRag, setShowRag] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
+  // Retrieval hit whose source document is open in the highlight overlay.
+  const [viewingContext, setViewingContext] = useState<RAGContext | null>(null)
   const streamRef = useRef<StreamHandle | null>(null)
 
-  // Load session from URL
+  // Load session from URL. Keyed on the route param alone on purpose — the
+  // other values are store reads that would retrigger a reload on every change.
   useEffect(() => {
     if (sessionId && sessionId !== currentSessionId) {
       loadSession(sessionId)
@@ -42,7 +46,7 @@ export default function ChatPage() {
       setCurrentSession(null)
       setMessages([])
     }
-  }, [sessionId])
+  }, [sessionId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadSession = async (id: string) => {
     try {
@@ -228,10 +232,23 @@ export default function ChatPage() {
 
           {/* RAG Panel */}
           {showRag && ragContexts.length > 0 && (
-            <RAGPanel contexts={ragContexts} onClose={() => setShowRag(false)} />
+            <RAGPanel
+              contexts={ragContexts}
+              onClose={() => setShowRag(false)}
+              onOpenDocument={setViewingContext}
+            />
           )}
         </div>
       </main>
+
+      {viewingContext && (
+        <DocumentViewer
+          documentId={viewingContext.document_id ?? null}
+          title={viewingContext.document_title}
+          highlights={[viewingContext.content]}
+          onClose={() => setViewingContext(null)}
+        />
+      )}
     </div>
   )
 }
